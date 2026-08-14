@@ -6,11 +6,15 @@ import unittest
 
 import numpy as np
 
-from drone_path.algorithm import GlobalMotionMeasurement
+from drone_path.algorithm import GlobalMotionMeasurement, MotionState
 from debug_ui.viewer import (
+    MOTION_STATE_CODES,
+    MOTION_STATE_COLORS,
+    StateTimelineViewport,
     _change_playback_speed,
     _draw_motion_metrics,
     _draw_speed_controls,
+    _draw_state_timeline,
     _draw_timeline,
     _frame_from_timeline,
     _point_inside,
@@ -54,6 +58,61 @@ class PlaybackSpeedTests(unittest.TestCase):
             delta=1,
         )
 
+    def test_timeline_colors_processed_motion_states(self) -> None:
+        frame = np.zeros((720, 1280, 3), dtype=np.uint8)
+        states = np.array(
+            [
+                MOTION_STATE_CODES[MotionState.TRANSLATION],
+                MOTION_STATE_CODES[MotionState.TRANSLATION],
+                MOTION_STATE_CODES[MotionState.ROTATION],
+                MOTION_STATE_CODES[MotionState.ROTATION],
+            ],
+            dtype=np.int8,
+        )
+
+        display = _draw_state_timeline(frame, 0, states, 0, 4, 250)
+
+        y = 674
+        right = frame.shape[1] - 14
+        one_quarter = 250 + (right - 250) // 4
+        three_quarters = 250 + 3 * (right - 250) // 4
+        self.assertTupleEqual(
+            tuple(int(value) for value in display[y, one_quarter]),
+            MOTION_STATE_COLORS[MotionState.TRANSLATION],
+        )
+        self.assertTupleEqual(
+            tuple(int(value) for value in display[y, three_quarters]),
+            MOTION_STATE_COLORS[MotionState.ROTATION],
+        )
+
+    def test_state_viewport_advances_from_ninety_to_ten_percent(self) -> None:
+        viewport = StateTimelineViewport()
+        total_frames = 18_888
+
+        initial_start, initial_end = viewport.bounds(240, total_frames)
+        window_frames = initial_end - initial_start
+        boundary_frame = round(window_frames * 0.90)
+        shifted_start, shifted_end = viewport.bounds(boundary_frame, total_frames)
+
+        self.assertEqual(initial_start, 0)
+        self.assertGreater(shifted_start, initial_start)
+        shifted_position = (boundary_frame - shifted_start) / (
+            shifted_end - shifted_start
+        )
+        self.assertAlmostEqual(shifted_position, 0.10, delta=0.002)
+        overlap = initial_end - shifted_start
+        self.assertAlmostEqual(overlap / window_frames, 0.20, delta=0.002)
+
+    def test_state_viewport_repositions_after_a_distant_seek(self) -> None:
+        viewport = StateTimelineViewport()
+        total_frames = 18_888
+        viewport.bounds(240, total_frames)
+
+        start, end = viewport.bounds(9_000, total_frames)
+
+        position = (9_000 - start) / (end - start)
+        self.assertAlmostEqual(position, 0.10, delta=0.002)
+
     def test_draws_valid_motion_metrics(self) -> None:
         frame = np.zeros((720, 1280, 3), dtype=np.uint8)
         measurement = GlobalMotionMeasurement(
@@ -68,7 +127,11 @@ class PlaybackSpeedTests(unittest.TestCase):
             tracked_count=100,
         )
 
-        display = _draw_motion_metrics(frame, measurement)
+        display = _draw_motion_metrics(
+            frame,
+            measurement,
+            MotionState.TRANSLATION,
+        )
 
         self.assertTrue(np.any(display != frame))
 

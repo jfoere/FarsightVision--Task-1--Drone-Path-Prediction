@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 import math
 from pathlib import Path
 import time
@@ -12,6 +13,8 @@ import numpy as np
 from drone_path.algorithm import (
     GlobalMotionEstimator,
     GlobalMotionMeasurement,
+    MotionClassifier,
+    MotionState,
     OpticalFlowEstimator,
     OpticalFlowResult,
 )
@@ -29,6 +32,56 @@ MAX_PLAYBACK_SPEED = 4.0
 PLAYBACK_SPEED_STEP = 0.1
 
 ButtonRectangle = tuple[int, int, int, int]
+
+MOTION_STATE_CODES = {
+    MotionState.UNCERTAIN: 0,
+    MotionState.TRANSLATION: 1,
+    MotionState.ROTATION: 2,
+}
+MOTION_STATE_COLORS = {
+    MotionState.UNCERTAIN: (120, 120, 120),
+    MotionState.TRANSLATION: (70, 210, 70),
+    MotionState.ROTATION: (0, 150, 255),
+}
+UNKNOWN_TIMELINE_COLOR = (80, 80, 80)
+
+
+@dataclass(slots=True)
+class StateTimelineViewport:
+    """Keep a stable 10x state window and advance it at the 90% boundary."""
+
+    zoom: float = 10.0
+    left_trigger: float = 0.10
+    right_trigger: float = 0.90
+    start_frame: int = 0
+    initialized: bool = False
+
+    def bounds(self, current_frame: int, total_frames: int) -> tuple[int, int]:
+        if total_frames <= 0:
+            return 0, 0
+
+        window_frames = max(1, math.ceil(total_frames / self.zoom))
+        max_start = max(0, total_frames - window_frames)
+        current_frame = min(total_frames - 1, max(0, current_frame))
+
+        if not self.initialized:
+            if current_frame <= round(window_frames * self.right_trigger):
+                self.start_frame = 0
+            else:
+                self.start_frame = current_frame - round(
+                    window_frames * self.left_trigger
+                )
+            self.initialized = True
+
+        visible_position = current_frame - self.start_frame
+        right_boundary = round(window_frames * self.right_trigger)
+        if visible_position >= right_boundary or visible_position < 0:
+            self.start_frame = current_frame - round(
+                window_frames * self.left_trigger
+            )
+
+        self.start_frame = min(max_start, max(0, self.start_frame))
+        return self.start_frame, min(total_frames, self.start_frame + window_frames)
 
 
 def _draw_status(
@@ -180,23 +233,28 @@ def _draw_optical_flow(
     return display
 
 
-def _draw_motion_metrics(frame, motion: GlobalMotionMeasurement):
-    """Draw raw global-motion measurements without assigning a motion label."""
-    if not motion.valid:
-        return frame
-
+def _draw_motion_metrics(
+    frame,
+    motion: GlobalMotionMeasurement,
+    state: MotionState,
+):
+    """Draw the current temporal state followed by its raw measurements."""
     display = frame.copy()
     overlay = display.copy()
     font = cv2.FONT_HERSHEY_SIMPLEX
     font_scale = max(0.42, min(0.56, display.shape[0] / 1500))
-    text = (
-        f"flow {motion.median_flow_pixels:.2f} px"
-        f"  |  shift ({motion.translation_x_pixels:+.2f}, "
-        f"{motion.translation_y_pixels:+.2f}) px"
-        f"  |  rot {motion.rotation_degrees:+.3f} deg"
-        f"  |  scale {motion.scale:.4f}"
-        f"  |  inliers {motion.inlier_ratio:.0%}"
-    )
+    if motion.valid:
+        text = (
+            f"{state.value}"
+            f"  |  flow {motion.median_flow_pixels:.2f} px"
+            f"  |  shift ({motion.translation_x_pixels:+.2f}, "
+            f"{motion.translation_y_pixels:+.2f}) px"
+            f"  |  rot {motion.rotation_degrees:+.3f} deg"
+            f"  |  scale {motion.scale:.4f}"
+            f"  |  inliers {motion.inlier_ratio:.0%}"
+        )
+    else:
+        text = f"{state.value}  |  motion unavailable"
     (text_width, text_height), baseline = cv2.getTextSize(
         text,
         font,
@@ -223,7 +281,7 @@ def _draw_motion_metrics(frame, motion: GlobalMotionMeasurement):
         (badge_x + padding_x, badge_y + padding_y + text_height),
         font,
         font_scale,
-        (225, 225, 225),
+        MOTION_STATE_COLORS[state],
         1,
         cv2.LINE_AA,
     )
@@ -315,7 +373,7 @@ def _draw_timeline(
     total_frames: int,
     left: int,
 ) -> tuple[np.ndarray, ButtonRectangle | None]:
-    """Draw one compact in-video seek line and return its mouse hit area."""
+    """Draw the fixed full-video position slider."""
     display = frame.copy()
     if total_frames <= 1:
         return display, None
@@ -336,7 +394,7 @@ def _draw_timeline(
         display,
         (left, control_center_y),
         (right, control_center_y),
-        (125, 125, 125),
+        (110, 110, 110),
         2,
         cv2.LINE_AA,
     )
@@ -348,15 +406,99 @@ def _draw_timeline(
         2,
         cv2.LINE_AA,
     )
+
     cv2.circle(
         display,
         (thumb_x, control_center_y),
-        6,
-        (0, 180, 255),
+        7,
+        (25, 25, 25),
+        -1,
+        cv2.LINE_AA,
+    )
+    cv2.circle(
+        display,
+        (thumb_x, control_center_y),
+        5,
+        (245, 245, 245),
         -1,
         cv2.LINE_AA,
     )
     return display, (left, control_center_y - 12, right, control_center_y + 12)
+
+
+def _draw_state_timeline(
+    frame,
+    frame_index: int,
+    state_codes: np.ndarray | None,
+    view_start: int,
+    view_end: int,
+    left: int,
+) -> np.ndarray:
+    """Draw a non-interactive 10x state line above the full-video slider."""
+    display = frame.copy()
+    if state_codes is None or view_end <= view_start:
+        return display
+
+    right = display.shape[1] - 14
+    if right - left < 80:
+        left = 76
+    if right <= left:
+        return display
+    position_line_y = display.shape[0] - 10 - max(
+        28,
+        min(36, round(display.shape[0] * 0.05)),
+    ) // 2
+    state_line_y = position_line_y - 18
+    line_width = right - left + 1
+
+    sampled_frames = np.rint(
+        np.linspace(view_start, view_end - 1, line_width)
+    ).astype(int)
+    sampled_codes = state_codes[sampled_frames]
+    colors = np.full(
+        (line_width, 3),
+        UNKNOWN_TIMELINE_COLOR,
+        dtype=np.uint8,
+    )
+    for state, code in MOTION_STATE_CODES.items():
+        colors[sampled_codes == code] = MOTION_STATE_COLORS[state]
+
+    for offset in (-2, -1, 0, 1, 2):
+        row = state_line_y + offset
+        if 0 <= row < display.shape[0]:
+            display[row, left : right + 1] = colors
+
+    visible_frames = max(1, view_end - view_start)
+    position = (frame_index - view_start) / visible_frames
+    position = min(1.0, max(0.0, position))
+    pointer_x = round(left + position * (right - left))
+    cv2.circle(
+        display,
+        (pointer_x, state_line_y),
+        6,
+        (25, 25, 25),
+        -1,
+        cv2.LINE_AA,
+    )
+    cv2.circle(
+        display,
+        (pointer_x, state_line_y),
+        4,
+        (245, 245, 245),
+        -1,
+        cv2.LINE_AA,
+    )
+    cv2.putText(
+        display,
+        "STATE 10x",
+        (max(4, left - 68), state_line_y + 5),
+        cv2.FONT_HERSHEY_SIMPLEX,
+        0.38,
+        (220, 220, 220),
+        1,
+        cv2.LINE_AA,
+    )
+    return display
 
 
 def _frame_from_timeline(x: int, rectangle: ButtonRectangle, total_frames: int) -> int:
@@ -454,6 +596,7 @@ def run_debug_viewer(
     )
     estimator = OpticalFlowEstimator()
     motion_estimator = GlobalMotionEstimator()
+    motion_classifier = MotionClassifier()
 
     paused = False
     advance_one_frame = True
@@ -464,6 +607,13 @@ def run_debug_viewer(
     current_flow_shape = None
     flow_result = OpticalFlowResult.empty()
     motion_measurement = GlobalMotionMeasurement.unavailable()
+    motion_state = MotionState.UNCERTAIN
+    classified_states = (
+        np.full((total_frames,), -1, dtype=np.int8)
+        if total_frames > 0
+        else None
+    )
+    state_viewport = StateTimelineViewport()
     frame_started_at = time.perf_counter()
     speed_state = {"value": 1.0}
     button_state: dict[str, ButtonRectangle | None] = {
@@ -543,6 +693,8 @@ def run_debug_viewer(
                 current_flow_shape = None
                 flow_result = OpticalFlowResult.empty()
                 motion_measurement = GlobalMotionMeasurement.unavailable()
+                motion_classifier.reset()
+                motion_state = MotionState.UNCERTAIN
                 paused = True
                 advance_one_frame = True
 
@@ -582,6 +734,19 @@ def run_debug_viewer(
                     flow_result,
                     (current_flow_frame.shape[1], current_flow_frame.shape[0]),
                 )
+                if fps > 0:
+                    motion_state = motion_classifier.update(
+                        motion_measurement,
+                        fps=fps,
+                        frame_width=current_flow_frame.shape[1],
+                    )
+                else:
+                    motion_state = MotionState.UNCERTAIN
+                if (
+                    classified_states is not None
+                    and 0 <= frame_index < classified_states.size
+                ):
+                    classified_states[frame_index] = MOTION_STATE_CODES[motion_state]
                 previous_flow_frame = current_flow_frame
                 advance_one_frame = False
 
@@ -605,18 +770,35 @@ def run_debug_viewer(
                     f"  |  arrows x{FLOW_VECTOR_DISPLAY_SCALE:g}"
                 ),
             )
-            display = _draw_motion_metrics(display, motion_measurement)
+            display = _draw_motion_metrics(
+                display,
+                motion_measurement,
+                motion_state,
+            )
             display, decrease_button, increase_button = _draw_speed_controls(
                 display,
                 float(speed_state["value"]),
             )
             button_state["decrease"] = decrease_button
             button_state["increase"] = increase_button
+            timeline_left = increase_button[2] + 72
+            view_start, view_end = state_viewport.bounds(
+                frame_index,
+                total_frames,
+            )
+            display = _draw_state_timeline(
+                display,
+                frame_index,
+                classified_states,
+                view_start,
+                view_end,
+                timeline_left,
+            )
             display, timeline = _draw_timeline(
                 display,
                 frame_index,
                 total_frames,
-                increase_button[2] + 16,
+                timeline_left,
             )
             button_state["timeline"] = timeline
             cv2.imshow(WINDOW_NAME, display)

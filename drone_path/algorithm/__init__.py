@@ -5,6 +5,11 @@ from drone_path.algorithm.global_motion import (
     GlobalMotionEstimator,
     GlobalMotionMeasurement,
 )
+from drone_path.algorithm.motion_classifier import (
+    MotionClassifier,
+    MotionClassifierConfig,
+    MotionState,
+)
 from drone_path.algorithm.optical_flow import (
     OpticalFlowConfig,
     OpticalFlowEstimator,
@@ -15,6 +20,9 @@ __all__ = [
     "GlobalMotionConfig",
     "GlobalMotionEstimator",
     "GlobalMotionMeasurement",
+    "MotionClassifier",
+    "MotionClassifierConfig",
+    "MotionState",
     "OpticalFlowConfig",
     "OpticalFlowEstimator",
     "OpticalFlowResult",

@@ -1,4 +1,9 @@
-"""Motion-estimation algorithms.
+"""Motion-estimation algorithms with no UI dependencies."""
 
-The first algorithm will be added only after the video-player step is approved.
-"""
+from drone_path.algorithm.optical_flow import (
+    OpticalFlowConfig,
+    OpticalFlowEstimator,
+    OpticalFlowResult,
+)
+
+__all__ = ["OpticalFlowConfig", "OpticalFlowEstimator", "OpticalFlowResult"]

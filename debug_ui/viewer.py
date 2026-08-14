@@ -19,6 +19,11 @@ INITIAL_MAX_HEIGHT = 720
 MAX_FLOW_VECTORS = 120
 FLOW_PROCESSING_MAX_WIDTH = 960
 FLOW_VECTOR_DISPLAY_SCALE = 10.0
+MIN_PLAYBACK_SPEED = 0.1
+MAX_PLAYBACK_SPEED = 4.0
+PLAYBACK_SPEED_STEP = 0.1
+
+ButtonRectangle = tuple[int, int, int, int]
 
 
 def _draw_status(
@@ -170,6 +175,150 @@ def _draw_optical_flow(
     return display
 
 
+def _change_playback_speed(current_speed: float, steps: int) -> float:
+    """Adjust speed in exact 0.1x steps and clamp it to the supported range."""
+    changed = current_speed + (steps * PLAYBACK_SPEED_STEP)
+    return min(MAX_PLAYBACK_SPEED, max(MIN_PLAYBACK_SPEED, round(changed, 1)))
+
+
+def _draw_speed_controls(
+    frame,
+    playback_speed: float,
+) -> tuple[np.ndarray, ButtonRectangle, ButtonRectangle]:
+    """Draw compact clickable speed controls and return their hit areas."""
+    display = frame.copy()
+    overlay = display.copy()
+    display_height = display.shape[0]
+    font = cv2.FONT_HERSHEY_SIMPLEX
+    font_scale = max(0.42, min(0.56, display_height / 1500))
+    button_height = max(28, min(36, round(display_height * 0.05)))
+    button_width = 58
+    speed_width = 106
+    gap = 4
+    left = 10
+    top = display_height - button_height - 10
+
+    decrease = (left, top, left + button_width, top + button_height)
+    speed_box_left = decrease[2] + gap
+    speed_box = (
+        speed_box_left,
+        top,
+        speed_box_left + speed_width,
+        top + button_height,
+    )
+    increase_left = speed_box[2] + gap
+    increase = (
+        increase_left,
+        top,
+        increase_left + button_width,
+        top + button_height,
+    )
+
+    for rectangle in (decrease, speed_box, increase):
+        cv2.rectangle(
+            overlay,
+            (rectangle[0], rectangle[1]),
+            (rectangle[2], rectangle[3]),
+            (0, 0, 0),
+            -1,
+        )
+    cv2.addWeighted(overlay, 0.65, display, 0.35, 0, display)
+
+    labels = (
+        (decrease, "-0.1"),
+        (speed_box, f"Speed {playback_speed:.1f}x"),
+        (increase, "+0.1"),
+    )
+    for rectangle, label in labels:
+        (text_width, text_height), _ = cv2.getTextSize(
+            label,
+            font,
+            font_scale,
+            1,
+        )
+        text_x = rectangle[0] + (rectangle[2] - rectangle[0] - text_width) // 2
+        text_y = rectangle[1] + (
+            rectangle[3] - rectangle[1] + text_height
+        ) // 2
+        cv2.putText(
+            display,
+            label,
+            (text_x, text_y),
+            font,
+            font_scale,
+            (235, 235, 235),
+            1,
+            cv2.LINE_AA,
+        )
+
+    return display, decrease, increase
+
+
+def _draw_timeline(
+    frame,
+    frame_index: int,
+    total_frames: int,
+    left: int,
+) -> tuple[np.ndarray, ButtonRectangle | None]:
+    """Draw one compact in-video seek line and return its mouse hit area."""
+    display = frame.copy()
+    if total_frames <= 1:
+        return display, None
+
+    right = display.shape[1] - 14
+    control_center_y = display.shape[0] - 10 - max(
+        28,
+        min(36, round(display.shape[0] * 0.05)),
+    ) // 2
+    if right - left < 80:
+        left = 14
+        control_center_y -= 28
+
+    progress = min(1.0, max(0.0, frame_index / (total_frames - 1)))
+    thumb_x = round(left + progress * (right - left))
+
+    cv2.line(
+        display,
+        (left, control_center_y),
+        (right, control_center_y),
+        (125, 125, 125),
+        2,
+        cv2.LINE_AA,
+    )
+    cv2.line(
+        display,
+        (left, control_center_y),
+        (thumb_x, control_center_y),
+        (0, 180, 255),
+        2,
+        cv2.LINE_AA,
+    )
+    cv2.circle(
+        display,
+        (thumb_x, control_center_y),
+        6,
+        (0, 180, 255),
+        -1,
+        cv2.LINE_AA,
+    )
+    return display, (left, control_center_y - 12, right, control_center_y + 12)
+
+
+def _frame_from_timeline(x: int, rectangle: ButtonRectangle, total_frames: int) -> int:
+    """Convert a timeline mouse position to a clamped zero-based frame index."""
+    width = max(1, rectangle[2] - rectangle[0])
+    progress = min(1.0, max(0.0, (x - rectangle[0]) / width))
+    return round(progress * max(0, total_frames - 1))
+
+
+def _point_inside(x: int, y: int, rectangle: ButtonRectangle | None) -> bool:
+    return bool(
+        rectangle
+        and rectangle[0] <= x <= rectangle[2]
+        and rectangle[1] <= y <= rectangle[3]
+    )
+
+
 def _fit_frame(frame, target_width: int, target_height: int):
     """Resize a frame to fit inside a target area without changing its aspect ratio."""
     frame_height, frame_width = frame.shape[:2]
@@ -234,7 +383,10 @@ def run_debug_viewer(
     _, capture = open_video(video_path)
     fps = float(capture.get(cv2.CAP_PROP_FPS))
     frame_delay_ms = max(1, round(1000 / fps)) if fps > 0 else 33
+    total_frames = max(0, int(capture.get(cv2.CAP_PROP_FRAME_COUNT)))
     start_frame = round(start_seconds * fps) if fps > 0 else 0
+    if total_frames > 0:
+        start_frame = min(start_frame, total_frames - 1)
     if start_frame > 0:
         capture.set(cv2.CAP_PROP_POS_FRAMES, start_frame)
     elif start_seconds > 0:
@@ -256,6 +408,56 @@ def run_debug_viewer(
     current_flow_shape = None
     flow_result = OpticalFlowResult.empty()
     frame_started_at = time.perf_counter()
+    speed_state = {"value": 1.0}
+    button_state: dict[str, ButtonRectangle | None] = {
+        "decrease": None,
+        "increase": None,
+        "timeline": None,
+    }
+    seek_state: dict[str, int | bool | None] = {
+        "requested": None,
+        "dragging": False,
+    }
+
+    def request_timeline_frame(x: int) -> None:
+        timeline = button_state["timeline"]
+        if timeline is not None:
+            seek_state["requested"] = _frame_from_timeline(
+                x,
+                timeline,
+                total_frames,
+            )
+
+    def on_mouse(event: int, x: int, y: int, flags: int, _data) -> None:
+        timeline = button_state["timeline"]
+        if event == cv2.EVENT_LBUTTONDOWN and _point_inside(x, y, timeline):
+            seek_state["dragging"] = True
+            request_timeline_frame(x)
+            return
+
+        if (
+            event == cv2.EVENT_MOUSEMOVE
+            and seek_state["dragging"]
+            and flags & cv2.EVENT_FLAG_LBUTTON
+        ):
+            request_timeline_frame(x)
+            return
+
+        if event != cv2.EVENT_LBUTTONUP:
+            return
+        if seek_state["dragging"]:
+            request_timeline_frame(x)
+            seek_state["dragging"] = False
+        elif _point_inside(x, y, button_state["decrease"]):
+            speed_state["value"] = _change_playback_speed(
+                float(speed_state["value"]),
+                -1,
+            )
+        elif _point_inside(x, y, button_state["increase"]):
+            speed_state["value"] = _change_playback_speed(
+                float(speed_state["value"]),
+                1,
+            )
 
     cv2.namedWindow(WINDOW_NAME, cv2.WINDOW_NORMAL | cv2.WINDOW_KEEPRATIO)
     source_width = max(1, int(capture.get(cv2.CAP_PROP_FRAME_WIDTH)))
@@ -270,8 +472,22 @@ def run_debug_viewer(
         round(source_width * initial_scale),
         round(source_height * initial_scale),
     )
+    cv2.setMouseCallback(WINDOW_NAME, on_mouse)
     try:
         while True:
+            requested_frame = seek_state["requested"]
+            if requested_frame is not None:
+                seek_state["requested"] = None
+                capture.set(cv2.CAP_PROP_POS_FRAMES, int(requested_frame))
+                frame_index = int(requested_frame) - 1
+                frames_read = 0
+                previous_flow_frame = None
+                current_frame = None
+                current_flow_shape = None
+                flow_result = OpticalFlowResult.empty()
+                paused = True
+                advance_one_frame = True
+
             if not paused or advance_one_frame:
                 frame_started_at = time.perf_counter()
                 if max_frames is not None and frames_read >= max_frames:
@@ -327,10 +543,24 @@ def run_debug_viewer(
                     f"  |  arrows x{FLOW_VECTOR_DISPLAY_SCALE:g}"
                 ),
             )
+            display, decrease_button, increase_button = _draw_speed_controls(
+                display,
+                float(speed_state["value"]),
+            )
+            button_state["decrease"] = decrease_button
+            button_state["increase"] = increase_button
+            display, timeline = _draw_timeline(
+                display,
+                frame_index,
+                total_frames,
+                increase_button[2] + 16,
+            )
+            button_state["timeline"] = timeline
             cv2.imshow(WINDOW_NAME, display)
 
             processing_ms = round((time.perf_counter() - frame_started_at) * 1000)
-            delay = 30 if paused else max(1, frame_delay_ms - processing_ms)
+            requested_delay = frame_delay_ms / float(speed_state["value"])
+            delay = 30 if paused else max(1, round(requested_delay) - processing_ms)
             key = cv2.waitKey(delay) & 0xFF
 
             if key in (ord("q"), 27):

@@ -24,6 +24,8 @@ class MotionClassifierConfig:
     flow_rate_hold_frame_widths_per_second: float = 0.04
     high_flow_enter_frame_widths_per_second: float = 0.20
     high_flow_hold_frame_widths_per_second: float = 0.10
+    ambiguous_flow_enter_frame_widths_per_second: float = 0.03
+    ambiguous_flow_hold_frame_widths_per_second: float = 0.02
     maximum_rotation_inlier_ratio: float = 0.85
     maximum_rotation_hold_inlier_ratio: float = 0.90
     minimum_valid_inlier_ratio: float = 0.25
@@ -118,6 +120,12 @@ class MotionClassifier:
             high_flow_threshold = config.high_flow_enter_frame_widths_per_second
             maximum_inlier_ratio = config.maximum_rotation_inlier_ratio
 
+        ambiguous_flow_threshold = (
+            config.ambiguous_flow_hold_frame_widths_per_second
+            if self._state == MotionState.UNCERTAIN
+            else config.ambiguous_flow_enter_frame_widths_per_second
+        )
+
         angular_rotation = (
             rotation_rate >= rotation_rate_threshold
             and normalized_flow_rate >= flow_rate_threshold
@@ -128,6 +136,8 @@ class MotionClassifier:
         )
         if angular_rotation or high_flow_with_model_disagreement:
             return MotionState.ROTATION
+        if normalized_flow_rate >= ambiguous_flow_threshold:
+            return MotionState.UNCERTAIN
         return MotionState.TRANSLATION
 
     def _confirmation_frames(self, state: MotionState) -> int:

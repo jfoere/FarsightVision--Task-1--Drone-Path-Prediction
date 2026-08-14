@@ -90,6 +90,23 @@ class MotionClassifierTests(unittest.TestCase):
 
         self.assertEqual(state, MotionState.ROTATION)
 
+    def test_high_flow_with_translation_geometry_becomes_uncertain(self) -> None:
+        self.establish_translation()
+        ambiguous = _measurement(flow=3.7, rotation=0.004, inliers=1.0)
+
+        for _ in range(3):
+            state = self.update(ambiguous)
+
+        self.assertEqual(state, MotionState.UNCERTAIN)
+
+    def test_normal_reliable_motion_remains_translation(self) -> None:
+        self.establish_translation()
+
+        for _ in range(10):
+            state = self.update(TRANSLATION)
+
+        self.assertEqual(state, MotionState.TRANSLATION)
+
     def test_invalid_measurements_become_uncertain(self) -> None:
         self.establish_translation()
         invalid = _measurement(flow=0.0, rotation=0.0, inliers=0.0, valid=False)

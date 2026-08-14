@@ -9,7 +9,12 @@ import time
 import cv2
 import numpy as np
 
-from drone_path.algorithm import OpticalFlowEstimator, OpticalFlowResult
+from drone_path.algorithm import (
+    GlobalMotionEstimator,
+    GlobalMotionMeasurement,
+    OpticalFlowEstimator,
+    OpticalFlowResult,
+)
 from drone_path.video import open_video
 
 
@@ -172,6 +177,56 @@ def _draw_optical_flow(
         )
         cv2.circle(display, current, 2, (70, 255, 70), -1, cv2.LINE_AA)
 
+    return display
+
+
+def _draw_motion_metrics(frame, motion: GlobalMotionMeasurement):
+    """Draw raw global-motion measurements without assigning a motion label."""
+    if not motion.valid:
+        return frame
+
+    display = frame.copy()
+    overlay = display.copy()
+    font = cv2.FONT_HERSHEY_SIMPLEX
+    font_scale = max(0.42, min(0.56, display.shape[0] / 1500))
+    text = (
+        f"flow {motion.median_flow_pixels:.2f} px"
+        f"  |  shift ({motion.translation_x_pixels:+.2f}, "
+        f"{motion.translation_y_pixels:+.2f}) px"
+        f"  |  rot {motion.rotation_degrees:+.3f} deg"
+        f"  |  scale {motion.scale:.4f}"
+        f"  |  inliers {motion.inlier_ratio:.0%}"
+    )
+    (text_width, text_height), baseline = cv2.getTextSize(
+        text,
+        font,
+        font_scale,
+        1,
+    )
+    badge_x = 10
+    badge_y = 45
+    padding_x = 8
+    padding_y = 6
+    badge_width = text_width + (padding_x * 2)
+    badge_height = text_height + baseline + (padding_y * 2)
+    cv2.rectangle(
+        overlay,
+        (badge_x, badge_y),
+        (badge_x + badge_width, badge_y + badge_height),
+        (0, 0, 0),
+        -1,
+    )
+    cv2.addWeighted(overlay, 0.62, display, 0.38, 0, display)
+    cv2.putText(
+        display,
+        text,
+        (badge_x + padding_x, badge_y + padding_y + text_height),
+        font,
+        font_scale,
+        (225, 225, 225),
+        1,
+        cv2.LINE_AA,
+    )
     return display
 
 
@@ -398,6 +453,7 @@ def run_debug_viewer(
         else None
     )
     estimator = OpticalFlowEstimator()
+    motion_estimator = GlobalMotionEstimator()
 
     paused = False
     advance_one_frame = True
@@ -407,6 +463,7 @@ def run_debug_viewer(
     current_frame = None
     current_flow_shape = None
     flow_result = OpticalFlowResult.empty()
+    motion_measurement = GlobalMotionMeasurement.unavailable()
     frame_started_at = time.perf_counter()
     speed_state = {"value": 1.0}
     button_state: dict[str, ButtonRectangle | None] = {
@@ -485,6 +542,7 @@ def run_debug_viewer(
                 current_frame = None
                 current_flow_shape = None
                 flow_result = OpticalFlowResult.empty()
+                motion_measurement = GlobalMotionMeasurement.unavailable()
                 paused = True
                 advance_one_frame = True
 
@@ -520,6 +578,10 @@ def run_debug_viewer(
                         previous_flow_frame,
                         current_flow_frame,
                     )
+                motion_measurement = motion_estimator.measure(
+                    flow_result,
+                    (current_flow_frame.shape[1], current_flow_frame.shape[0]),
+                )
                 previous_flow_frame = current_flow_frame
                 advance_one_frame = False
 
@@ -543,6 +605,7 @@ def run_debug_viewer(
                     f"  |  arrows x{FLOW_VECTOR_DISPLAY_SCALE:g}"
                 ),
             )
+            display = _draw_motion_metrics(display, motion_measurement)
             display, decrease_button, increase_button = _draw_speed_controls(
                 display,
                 float(speed_state["value"]),

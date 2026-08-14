@@ -6,8 +6,10 @@ import unittest
 
 import numpy as np
 
+from drone_path.algorithm import GlobalMotionMeasurement
 from debug_ui.viewer import (
     _change_playback_speed,
+    _draw_motion_metrics,
     _draw_speed_controls,
     _draw_timeline,
     _frame_from_timeline,
@@ -51,6 +53,24 @@ class PlaybackSpeedTests(unittest.TestCase):
             500,
             delta=1,
         )
+
+    def test_draws_valid_motion_metrics(self) -> None:
+        frame = np.zeros((720, 1280, 3), dtype=np.uint8)
+        measurement = GlobalMotionMeasurement(
+            valid=True,
+            median_flow_pixels=1.25,
+            translation_x_pixels=0.5,
+            translation_y_pixels=-0.25,
+            rotation_degrees=0.1,
+            scale=1.0,
+            inlier_ratio=0.95,
+            inlier_count=95,
+            tracked_count=100,
+        )
+
+        display = _draw_motion_metrics(frame, measurement)
+
+        self.assertTrue(np.any(display != frame))
 
 
 if __name__ == "__main__":

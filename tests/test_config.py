@@ -62,7 +62,8 @@ class ConfigTests(unittest.TestCase):
                 "[rotation_section]\n"
                 "minimum_rotation_degrees = 4.0\n"
                 "minimum_samples = 8\n"
-                "axis_dominance_ratio = 2.5\n",
+                "axis_dominance_ratio = 2.5\n"
+                "minimum_yaw_sign_consistency = 0.6\n",
                 encoding="utf-8",
             )
 
@@ -71,6 +72,10 @@ class ConfigTests(unittest.TestCase):
         self.assertEqual(config.rotation_section.minimum_rotation_degrees, 4.0)
         self.assertEqual(config.rotation_section.minimum_samples, 8)
         self.assertEqual(config.rotation_section.axis_dominance_ratio, 2.5)
+        self.assertEqual(
+            config.rotation_section.minimum_yaw_sign_consistency,
+            0.6,
+        )
 
     def test_rejects_field_of_view_outside_valid_range(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

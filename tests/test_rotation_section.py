@@ -45,11 +45,26 @@ class RotationSectionClassifierTests(unittest.TestCase):
 
         self.assertEqual(result.kind, RotationSectionKind.DRONE_YAW)
         self.assertAlmostEqual(result.total_rotation_degrees, 38.33, delta=0.01)
+        self.assertAlmostEqual(result.heading_change_degrees or 0.0, 38.33, delta=0.01)
+
+    def test_preserves_left_turn_sign(self) -> None:
+        result = self.classifier.classify(_measurement((0.2, -37.0, -10.0)))
+
+        self.assertEqual(result.kind, RotationSectionKind.DRONE_YAW)
+        self.assertAlmostEqual(result.heading_change_degrees or 0.0, -38.33, delta=0.01)
+
+    def test_rejects_disagreeing_yaw_sign_components(self) -> None:
+        result = self.classifier.classify(_measurement((0.2, 10.0, -10.0)))
+
+        self.assertEqual(result.kind, RotationSectionKind.UNCERTAIN)
+        self.assertIsNone(result.heading_change_degrees)
+        self.assertTrue(result.significant)
 
     def test_marks_mixed_axes_as_uncertain(self) -> None:
         result = self.classifier.classify(_measurement((8.0, 7.0, 0.0)))
 
         self.assertEqual(result.kind, RotationSectionKind.UNCERTAIN)
+        self.assertTrue(result.significant)
 
     def test_marks_short_sections_as_uncertain(self) -> None:
         result = self.classifier.classify(
@@ -57,6 +72,7 @@ class RotationSectionClassifierTests(unittest.TestCase):
         )
 
         self.assertEqual(result.kind, RotationSectionKind.UNCERTAIN)
+        self.assertFalse(result.significant)
 
     def test_marks_small_rotation_as_uncertain(self) -> None:
         classifier = RotationSectionClassifier(
@@ -66,6 +82,7 @@ class RotationSectionClassifierTests(unittest.TestCase):
         result = classifier.classify(_measurement((0.0, 2.0, 0.0)))
 
         self.assertEqual(result.kind, RotationSectionKind.UNCERTAIN)
+        self.assertFalse(result.significant)
 
 
 if __name__ == "__main__":

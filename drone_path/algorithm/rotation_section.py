@@ -24,6 +24,7 @@ class RotationSectionConfig:
     minimum_rotation_degrees: float = 3.0
     minimum_samples: int = 5
     axis_dominance_ratio: float = 2.0
+    minimum_yaw_sign_consistency: float = 0.50
 
     def __post_init__(self) -> None:
         if (
@@ -38,6 +39,13 @@ class RotationSectionConfig:
             or self.axis_dominance_ratio <= 1
         ):
             raise ValueError("axis_dominance_ratio must be greater than one")
+        if (
+            not math.isfinite(self.minimum_yaw_sign_consistency)
+            or not 0 <= self.minimum_yaw_sign_consistency <= 1
+        ):
+            raise ValueError(
+                "minimum_yaw_sign_consistency must be between zero and one"
+            )
 
 
 @dataclass(frozen=True, slots=True)
@@ -49,6 +57,8 @@ class RotationSectionClassification:
     pitch_component_degrees: float
     yaw_plane_component_degrees: float
     sample_count: int
+    heading_change_degrees: float | None = None
+    significant: bool = False
 
     @classmethod
     def unavailable(cls) -> "RotationSectionClassification":
@@ -58,6 +68,8 @@ class RotationSectionClassification:
             pitch_component_degrees=0.0,
             yaw_plane_component_degrees=0.0,
             sample_count=0,
+            heading_change_degrees=None,
+            significant=False,
         )
 
 
@@ -98,14 +110,32 @@ class RotationSectionClassifier:
         dominance = self.config.axis_dominance_ratio
         if pitch_component > yaw_plane_component * dominance:
             kind = RotationSectionKind.GIMBAL_PITCH
+            heading_change = 0.0
         elif yaw_plane_component > pitch_component * dominance:
             kind = RotationSectionKind.DRONE_YAW
+            # For a camera pitched between horizontal and downward, the
+            # drone's vertical yaw axis has camera-Y and camera-Z components
+            # with the same sign. Their signed sum therefore distinguishes a
+            # right turn from a left turn without confusing pitch with yaw.
+            sign_source = y_degrees + z_degrees
+            component_sum = abs(y_degrees) + abs(z_degrees)
+            sign_consistency = (
+                abs(sign_source) / component_sum if component_sum > 1e-9 else 0.0
+            )
+            if sign_consistency < self.config.minimum_yaw_sign_consistency:
+                kind = RotationSectionKind.UNCERTAIN
+                heading_change = None
+            else:
+                heading_change = math.copysign(yaw_plane_component, sign_source)
         else:
             kind = RotationSectionKind.UNCERTAIN
+            heading_change = None
         return RotationSectionClassification(
             kind=kind,
             total_rotation_degrees=total_rotation,
             pitch_component_degrees=x_degrees,
             yaw_plane_component_degrees=yaw_plane_component,
             sample_count=measurement.sample_count,
+            heading_change_degrees=heading_change,
+            significant=True,
         )

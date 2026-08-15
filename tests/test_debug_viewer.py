@@ -10,6 +10,7 @@ from drone_path.algorithm import (
     CameraRotationMeasurement,
     GlobalMotionMeasurement,
     MotionState,
+    RelativeHeadingTracker,
     RelativePathTracker,
     RotationSectionClassification,
     RotationSectionKind,
@@ -210,7 +211,20 @@ class PlaybackSpeedTests(unittest.TestCase):
         path = RelativePathTracker()
         path.add_direction_sample(direction, distance=1.0)
 
-        display = _draw_relative_path(frame, path)
+        heading = RelativeHeadingTracker()
+        heading.apply(
+            RotationSectionClassification(
+                kind=RotationSectionKind.DRONE_YAW,
+                total_rotation_degrees=38.0,
+                pitch_component_degrees=1.0,
+                yaw_plane_component_degrees=38.0,
+                sample_count=20,
+                heading_change_degrees=38.0,
+                significant=True,
+            )
+        )
+
+        display = _draw_relative_path(frame, path, heading)
 
         self.assertTrue(np.any(display != frame))
 

@@ -22,3 +22,5 @@ minimum_rotation_degrees = 3.0
 minimum_samples = 5
 # One rotation-axis family must exceed the other by this factor.
 axis_dominance_ratio = 2.0
+# 1.0 means camera-Y and camera-Z agree perfectly on left/right turn sign.
+minimum_yaw_sign_consistency = 0.50

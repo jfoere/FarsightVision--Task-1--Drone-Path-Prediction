@@ -74,6 +74,7 @@ class RotationSectionConfig:
     minimum_rotation_degrees: float = 3.0
     minimum_samples: int = 5
     axis_dominance_ratio: float = 2.0
+    minimum_yaw_sign_consistency: float = 0.50
 
     def __post_init__(self) -> None:
         if (
@@ -91,6 +92,14 @@ class RotationSectionConfig:
         ):
             raise ConfigError(
                 "rotation_section.axis_dominance_ratio must be greater than one"
+            )
+        if (
+            not math.isfinite(self.minimum_yaw_sign_consistency)
+            or not 0 <= self.minimum_yaw_sign_consistency <= 1
+        ):
+            raise ConfigError(
+                "rotation_section.minimum_yaw_sign_consistency must be "
+                "between zero and one"
             )
 
 
@@ -175,9 +184,14 @@ def load_config(path: str | Path | None = None) -> DronePathConfig:
         "axis_dominance_ratio",
         RotationSectionConfig().axis_dominance_ratio,
     )
+    raw_yaw_sign_consistency = rotation_section.get(
+        "minimum_yaw_sign_consistency",
+        RotationSectionConfig().minimum_yaw_sign_consistency,
+    )
     for key, value in (
         ("minimum_rotation_degrees", raw_minimum_rotation),
         ("axis_dominance_ratio", raw_axis_dominance),
+        ("minimum_yaw_sign_consistency", raw_yaw_sign_consistency),
     ):
         if isinstance(value, bool) or not isinstance(value, (int, float)):
             raise ConfigError(f"rotation_section.{key} must be a number")
@@ -201,5 +215,6 @@ def load_config(path: str | Path | None = None) -> DronePathConfig:
             minimum_rotation_degrees=float(raw_minimum_rotation),
             minimum_samples=raw_minimum_samples,
             axis_dominance_ratio=float(raw_axis_dominance),
+            minimum_yaw_sign_consistency=float(raw_yaw_sign_consistency),
         ),
     )

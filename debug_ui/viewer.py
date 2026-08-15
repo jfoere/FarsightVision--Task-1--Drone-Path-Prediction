@@ -20,6 +20,7 @@ from drone_path.algorithm import (
     MotionState,
     OpticalFlowEstimator,
     OpticalFlowResult,
+    RelativeHeadingTracker,
     RelativePathStatus,
     RelativePathTracker,
     RotationSectionClassification,
@@ -500,12 +501,22 @@ def _draw_camera_rotation(
         cv2.LINE_AA,
     )
     if rotation.valid:
-        cv2.putText(
-            display,
-            (
+        if (
+            classification.kind == RotationSectionKind.DRONE_YAW
+            and classification.heading_change_degrees is not None
+        ):
+            turn = "RIGHT" if classification.heading_change_degrees >= 0 else "LEFT"
+            classification_label = (
+                f"DRONE YAW {classification.heading_change_degrees:+.1f} {turn}"
+            )
+        else:
+            classification_label = (
                 f"{classification.kind.value}  "
                 f"{classification.total_rotation_degrees:.1f} deg"
-            ),
+            )
+        cv2.putText(
+            display,
+            classification_label,
             (left + 8, top + 32),
             font,
             0.29,
@@ -624,6 +635,7 @@ def _draw_camera_rotation(
 def _draw_relative_path(
     frame,
     path: RelativePathTracker,
+    heading: RelativeHeadingTracker,
     rotation_section: RotationSectionClassification | None = None,
 ) -> np.ndarray:
     """Draw the safely accumulated relative path in the second panel."""
@@ -672,6 +684,24 @@ def _draw_relative_path(
         1,
         cv2.LINE_AA,
     )
+    if heading.known:
+        heading_label = f"HEADING {heading.heading_degrees:+.1f} deg"
+        if heading.last_change_degrees is not None:
+            heading_label += f" / delta {heading.last_change_degrees:+.1f}"
+        heading_color = CAMERA_DIRECTION_COLOR
+    else:
+        heading_label = "HEADING ?"
+        heading_color = MOTION_STATE_COLORS[MotionState.UNCERTAIN]
+    cv2.putText(
+        display,
+        heading_label,
+        (left + 8, top + 48),
+        font,
+        0.28,
+        heading_color,
+        1,
+        cv2.LINE_AA,
+    )
     cv2.putText(
         display,
         f"section {path.section_count} / {path.sample_count} samples",
@@ -685,7 +715,7 @@ def _draw_relative_path(
 
     plot_left = left + 12
     plot_right = right - 12
-    plot_top = top + 40
+    plot_top = top + 56
     plot_bottom = bottom - 20
     center_x = (plot_left + plot_right) // 2
     center_y = (plot_top + plot_bottom) // 2
@@ -748,6 +778,31 @@ def _draw_relative_path(
             2,
             cv2.LINE_AA,
             tipLength=0.35,
+        )
+    if heading.known:
+        heading_angle = math.radians(heading.heading_degrees)
+        heading_end = (
+            current[0] + round(math.sin(heading_angle) * 25),
+            current[1] - round(math.cos(heading_angle) * 25),
+        )
+        cv2.arrowedLine(
+            display,
+            current,
+            heading_end,
+            CAMERA_DIRECTION_COLOR,
+            2,
+            cv2.LINE_AA,
+            tipLength=0.30,
+        )
+        cv2.putText(
+            display,
+            "HEAD",
+            (heading_end[0] + 3, heading_end[1] + 3),
+            font,
+            0.25,
+            CAMERA_DIRECTION_COLOR,
+            1,
+            cv2.LINE_AA,
         )
     return display
 
@@ -1086,9 +1141,13 @@ def run_debug_viewer(
             axis_dominance_ratio=(
                 project_config.rotation_section.axis_dominance_ratio
             ),
+            minimum_yaw_sign_consistency=(
+                project_config.rotation_section.minimum_yaw_sign_consistency
+            ),
         )
     )
     relative_path = RelativePathTracker()
+    relative_heading = RelativeHeadingTracker()
     direction_window_frames = (
         max(1, round(project_config.movement_direction.window_seconds * fps))
         if fps > 0
@@ -1211,6 +1270,7 @@ def run_debug_viewer(
                 direction_anchor_frame = None
                 direction_anchor_index = None
                 relative_path.reset()
+                relative_heading.reset()
                 paused = True
                 advance_one_frame = True
 
@@ -1263,6 +1323,7 @@ def run_debug_viewer(
                         last_rotation_classification = rotation_classifier.classify(
                             rotation_measurement
                         )
+                        relative_heading.apply(last_rotation_classification)
                         rotation_section_active = False
                     rotation_handler.reset()
                     rotation_measurement = CameraRotationMeasurement.unavailable()
@@ -1377,6 +1438,7 @@ def run_debug_viewer(
             display = _draw_relative_path(
                 display,
                 relative_path,
+                relative_heading,
                 visible_rotation_classification,
             )
             display, decrease_button, increase_button = _draw_speed_controls(

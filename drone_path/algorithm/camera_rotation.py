@@ -53,6 +53,10 @@ class CameraRotationMeasurement:
     median_reprojection_error_pixels: float
     sample_count: int
     tracked_count: int
+    # Axis-angle rotation vector in camera coordinates. X is the gimbal-pitch
+    # axis; a level drone's yaw axis appears in the camera Y/Z plane when the
+    # gimbal is pitched.
+    rotation_vector_degrees: tuple[float, float, float] = (0.0, 0.0, 0.0)
 
     @classmethod
     def unavailable(cls) -> "CameraRotationMeasurement":
@@ -65,6 +69,7 @@ class CameraRotationMeasurement:
             median_reprojection_error_pixels=0.0,
             sample_count=0,
             tracked_count=0,
+            rotation_vector_degrees=(0.0, 0.0, 0.0),
         )
 
 
@@ -157,6 +162,10 @@ class CameraRotationHandler:
         self._camera_orientation = self._camera_orientation @ physical_delta
         self._camera_orientation = _nearest_rotation(self._camera_orientation)
         yaw, pitch, roll = _camera_euler_degrees(self._camera_orientation)
+        accumulated_vector, _ = cv2.Rodrigues(self._camera_orientation)
+        rotation_vector_degrees = tuple(
+            math.degrees(float(value)) for value in accumulated_vector.reshape(3)
+        )
         self._measurement = CameraRotationMeasurement(
             valid=True,
             yaw_degrees=yaw,
@@ -166,6 +175,7 @@ class CameraRotationHandler:
             median_reprojection_error_pixels=median_error,
             sample_count=self._measurement.sample_count + 1,
             tracked_count=flow.tracked_count,
+            rotation_vector_degrees=rotation_vector_degrees,
         )
         return self._measurement
 

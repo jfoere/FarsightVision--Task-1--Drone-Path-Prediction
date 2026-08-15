@@ -11,6 +11,8 @@ from drone_path.algorithm import (
     GlobalMotionMeasurement,
     MotionState,
     RelativePathTracker,
+    RotationSectionClassification,
+    RotationSectionKind,
     TranslationDirectionMeasurement,
 )
 from debug_ui.viewer import (
@@ -181,6 +183,13 @@ class PlaybackSpeedTests(unittest.TestCase):
         display = _draw_camera_rotation(
             frame,
             rotation,
+            RotationSectionClassification(
+                kind=RotationSectionKind.DRONE_YAW,
+                total_rotation_degrees=35.5,
+                pitch_component_degrees=1.0,
+                yaw_plane_component_degrees=35.5,
+                sample_count=20,
+            ),
             MotionState.ROTATION,
         )
 

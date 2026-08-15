@@ -22,6 +22,10 @@ from drone_path.algorithm import (
     OpticalFlowResult,
     RelativePathStatus,
     RelativePathTracker,
+    RotationSectionClassification,
+    RotationSectionClassifier,
+    RotationSectionConfig as RotationSectionAlgorithmConfig,
+    RotationSectionKind,
     TranslationDirectionConfig,
     TranslationDirectionEstimator,
     TranslationDirectionMeasurement,
@@ -56,6 +60,11 @@ UNKNOWN_TIMELINE_COLOR = (80, 80, 80)
 CAMERA_DIRECTION_COLOR = (0, 220, 255)
 MOVEMENT_DIRECTION_COLOR = (255, 210, 50)
 RELATIVE_PATH_COLOR = (70, 210, 70)
+ROTATION_SECTION_COLORS = {
+    RotationSectionKind.UNCERTAIN: (150, 150, 150),
+    RotationSectionKind.GIMBAL_PITCH: (255, 210, 50),
+    RotationSectionKind.DRONE_YAW: (0, 150, 255),
+}
 
 
 @dataclass(slots=True)
@@ -463,9 +472,10 @@ def _draw_translation_direction(
 def _draw_camera_rotation(
     frame,
     rotation: CameraRotationMeasurement,
+    classification: RotationSectionClassification,
     state: MotionState,
 ) -> np.ndarray:
-    """Draw accumulated camera yaw, pitch, and roll in the first panel."""
+    """Draw optical rotation and its constraint-based interpretation."""
     display = frame.copy()
     geometry = _debug_panel_geometry(display, 0)
     if geometry is None:
@@ -478,9 +488,10 @@ def _draw_camera_rotation(
 
     font = cv2.FONT_HERSHEY_SIMPLEX
     state_color = MOTION_STATE_COLORS[state]
+    classification_color = ROTATION_SECTION_COLORS[classification.kind]
     cv2.putText(
         display,
-        "CAMERA ROTATION",
+        "OPTICAL ROTATION",
         (left + 8, top + 17),
         font,
         0.36,
@@ -491,17 +502,23 @@ def _draw_camera_rotation(
     if rotation.valid:
         cv2.putText(
             display,
-            f"yaw {rotation.yaw_degrees:+.1f}  pitch {rotation.pitch_degrees:+.1f}",
+            (
+                f"{classification.kind.value}  "
+                f"{classification.total_rotation_degrees:.1f} deg"
+            ),
             (left + 8, top + 32),
             font,
             0.29,
-            (215, 215, 215),
+            classification_color,
             1,
             cv2.LINE_AA,
         )
         cv2.putText(
             display,
-            f"roll {rotation.roll_degrees:+.1f}  samples {rotation.sample_count}",
+            (
+                f"axis X {classification.pitch_component_degrees:+.1f}  "
+                f"YZ {classification.yaw_plane_component_degrees:.1f}"
+            ),
             (left + 8, top + 47),
             font,
             0.29,
@@ -510,8 +527,8 @@ def _draw_camera_rotation(
             cv2.LINE_AA,
         )
         footer = (
-            f"inliers {rotation.inlier_ratio:.0%} / "
-            f"error {rotation.median_reprojection_error_pixels:.1f}px"
+            f"{rotation.sample_count} samples / {rotation.inlier_ratio:.0%} / "
+            f"{rotation.median_reprojection_error_pixels:.1f}px"
         )
     else:
         cv2.putText(
@@ -604,7 +621,11 @@ def _draw_camera_rotation(
     return display
 
 
-def _draw_relative_path(frame, path: RelativePathTracker) -> np.ndarray:
+def _draw_relative_path(
+    frame,
+    path: RelativePathTracker,
+    rotation_section: RotationSectionClassification | None = None,
+) -> np.ndarray:
     """Draw the safely accumulated relative path in the second panel."""
     display = frame.copy()
     geometry = _debug_panel_geometry(display, 1)
@@ -621,7 +642,10 @@ def _draw_relative_path(frame, path: RelativePathTracker) -> np.ndarray:
         status_label = "ACTIVE"
         status_color = RELATIVE_PATH_COLOR
     elif path.status == RelativePathStatus.ORIENTATION_UNKNOWN:
-        status_label = "ORIENTATION ?"
+        if rotation_section is None or rotation_section.sample_count == 0:
+            status_label = "ORIENTATION ?"
+        else:
+            status_label = f"FROZEN / {rotation_section.kind.value}"
         status_color = MOTION_STATE_COLORS[MotionState.ROTATION]
     else:
         status_label = "WAITING"
@@ -1053,6 +1077,17 @@ def run_debug_viewer(
             ),
         )
     )
+    rotation_classifier = RotationSectionClassifier(
+        RotationSectionAlgorithmConfig(
+            minimum_rotation_degrees=(
+                project_config.rotation_section.minimum_rotation_degrees
+            ),
+            minimum_samples=project_config.rotation_section.minimum_samples,
+            axis_dominance_ratio=(
+                project_config.rotation_section.axis_dominance_ratio
+            ),
+        )
+    )
     relative_path = RelativePathTracker()
     direction_window_frames = (
         max(1, round(project_config.movement_direction.window_seconds * fps))
@@ -1072,6 +1107,9 @@ def run_debug_viewer(
     motion_state = MotionState.UNCERTAIN
     direction_measurement = TranslationDirectionMeasurement.unavailable()
     rotation_measurement = CameraRotationMeasurement.unavailable()
+    rotation_classification = RotationSectionClassification.unavailable()
+    last_rotation_classification = RotationSectionClassification.unavailable()
+    rotation_section_active = False
     direction_anchor_frame = None
     direction_anchor_index: int | None = None
     classified_states = (
@@ -1165,6 +1203,11 @@ def run_debug_viewer(
                 direction_measurement = TranslationDirectionMeasurement.unavailable()
                 rotation_handler.reset()
                 rotation_measurement = CameraRotationMeasurement.unavailable()
+                rotation_classification = RotationSectionClassification.unavailable()
+                last_rotation_classification = (
+                    RotationSectionClassification.unavailable()
+                )
+                rotation_section_active = False
                 direction_anchor_frame = None
                 direction_anchor_index = None
                 relative_path.reset()
@@ -1216,8 +1259,16 @@ def run_debug_viewer(
                 else:
                     motion_state = MotionState.UNCERTAIN
                 if motion_state == MotionState.TRANSLATION and fps > 0:
+                    if rotation_section_active:
+                        last_rotation_classification = rotation_classifier.classify(
+                            rotation_measurement
+                        )
+                        rotation_section_active = False
                     rotation_handler.reset()
                     rotation_measurement = CameraRotationMeasurement.unavailable()
+                    rotation_classification = (
+                        RotationSectionClassification.unavailable()
+                    )
                     if direction_anchor_frame is None:
                         direction_anchor_frame = current_flow_frame.copy()
                         direction_anchor_index = frame_index
@@ -1249,6 +1300,7 @@ def run_debug_viewer(
                         direction_anchor_frame = current_flow_frame.copy()
                         direction_anchor_index = frame_index
                 else:
+                    rotation_section_active = True
                     relative_path.mark_orientation_unknown()
                     rotation_measurement = rotation_handler.update(
                         flow_result,
@@ -1259,6 +1311,9 @@ def run_debug_viewer(
                         horizontal_fov_degrees=(
                             project_config.camera.horizontal_fov_degrees
                         ),
+                    )
+                    rotation_classification = rotation_classifier.classify(
+                        rotation_measurement
                     )
                     direction_estimator.reset()
                     direction_measurement = (
@@ -1311,9 +1366,19 @@ def run_debug_viewer(
                 display = _draw_camera_rotation(
                     display,
                     rotation_measurement,
+                    rotation_classification,
                     motion_state,
                 )
-            display = _draw_relative_path(display, relative_path)
+            visible_rotation_classification = (
+                rotation_classification
+                if rotation_section_active
+                else last_rotation_classification
+            )
+            display = _draw_relative_path(
+                display,
+                relative_path,
+                visible_rotation_classification,
+            )
             display, decrease_button, increase_button = _draw_speed_controls(
                 display,
                 float(speed_state["value"]),

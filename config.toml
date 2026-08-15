@@ -14,3 +14,11 @@ smoothing_alpha = 0.35
 maximum_reprojection_error_pixels = 8.0
 # Fraction of tracked points that must agree with the homography.
 minimum_inlier_ratio = 0.50
+
+[rotation_section]
+# Ignore short/noisy optical-rotation sections below this total angle.
+minimum_rotation_degrees = 3.0
+# Require enough accepted frame-pair estimates before assigning a motion type.
+minimum_samples = 5
+# One rotation-axis family must exceed the other by this factor.
+axis_dominance_ratio = 2.0

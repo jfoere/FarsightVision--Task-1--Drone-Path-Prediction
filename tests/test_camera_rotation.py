@@ -94,6 +94,10 @@ class CameraRotationHandlerTests(unittest.TestCase):
         self.assertAlmostEqual(measurement.pitch_degrees, 5.0, delta=0.1)
         self.assertAlmostEqual(measurement.roll_degrees, -4.0, delta=0.1)
         self.assertGreater(measurement.inlier_ratio, 0.99)
+        self.assertGreater(
+            math.sqrt(sum(value * value for value in measurement.rotation_vector_degrees)),
+            9.0,
+        )
 
     def test_accumulates_consecutive_rotation_updates(self) -> None:
         flow = _rotation_flow(7.0, 0.0, 0.0)

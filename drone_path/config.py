@@ -70,10 +70,36 @@ class CameraRotationConfig:
 
 
 @dataclass(frozen=True, slots=True)
+class RotationSectionConfig:
+    minimum_rotation_degrees: float = 3.0
+    minimum_samples: int = 5
+    axis_dominance_ratio: float = 2.0
+
+    def __post_init__(self) -> None:
+        if (
+            not math.isfinite(self.minimum_rotation_degrees)
+            or self.minimum_rotation_degrees <= 0
+        ):
+            raise ConfigError(
+                "rotation_section.minimum_rotation_degrees must be greater than zero"
+            )
+        if self.minimum_samples < 1:
+            raise ConfigError("rotation_section.minimum_samples must be at least 1")
+        if (
+            not math.isfinite(self.axis_dominance_ratio)
+            or self.axis_dominance_ratio <= 1
+        ):
+            raise ConfigError(
+                "rotation_section.axis_dominance_ratio must be greater than one"
+            )
+
+
+@dataclass(frozen=True, slots=True)
 class DronePathConfig:
     camera: CameraConfig = CameraConfig()
     movement_direction: MovementDirectionConfig = MovementDirectionConfig()
     camera_rotation: CameraRotationConfig = CameraRotationConfig()
+    rotation_section: RotationSectionConfig = RotationSectionConfig()
 
 
 def load_config(path: str | Path | None = None) -> DronePathConfig:
@@ -134,6 +160,33 @@ def load_config(path: str | Path | None = None) -> DronePathConfig:
         if isinstance(value, bool) or not isinstance(value, (int, float)):
             raise ConfigError(f"camera_rotation.{key} must be a number")
 
+    rotation_section = raw_config.get("rotation_section", {})
+    if not isinstance(rotation_section, dict):
+        raise ConfigError("rotation_section must be a TOML table")
+    raw_minimum_rotation = rotation_section.get(
+        "minimum_rotation_degrees",
+        RotationSectionConfig().minimum_rotation_degrees,
+    )
+    raw_minimum_samples = rotation_section.get(
+        "minimum_samples",
+        RotationSectionConfig().minimum_samples,
+    )
+    raw_axis_dominance = rotation_section.get(
+        "axis_dominance_ratio",
+        RotationSectionConfig().axis_dominance_ratio,
+    )
+    for key, value in (
+        ("minimum_rotation_degrees", raw_minimum_rotation),
+        ("axis_dominance_ratio", raw_axis_dominance),
+    ):
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            raise ConfigError(f"rotation_section.{key} must be a number")
+    if isinstance(raw_minimum_samples, bool) or not isinstance(
+        raw_minimum_samples,
+        int,
+    ):
+        raise ConfigError("rotation_section.minimum_samples must be an integer")
+
     return DronePathConfig(
         camera=CameraConfig(horizontal_fov_degrees=float(raw_fov)),
         movement_direction=MovementDirectionConfig(
@@ -143,5 +196,10 @@ def load_config(path: str | Path | None = None) -> DronePathConfig:
         camera_rotation=CameraRotationConfig(
             maximum_reprojection_error_pixels=float(raw_rotation_error),
             minimum_inlier_ratio=float(raw_rotation_inliers),
+        ),
+        rotation_section=RotationSectionConfig(
+            minimum_rotation_degrees=float(raw_minimum_rotation),
+            minimum_samples=raw_minimum_samples,
+            axis_dominance_ratio=float(raw_axis_dominance),
         ),
     )

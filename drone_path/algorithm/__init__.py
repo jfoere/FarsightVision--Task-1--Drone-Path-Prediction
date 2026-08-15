@@ -26,6 +26,12 @@ from drone_path.algorithm.relative_path import (
     RelativePathStatus,
     RelativePathTracker,
 )
+from drone_path.algorithm.rotation_section import (
+    RotationSectionClassification,
+    RotationSectionClassifier,
+    RotationSectionConfig,
+    RotationSectionKind,
+)
 from drone_path.algorithm.translation_direction import (
     TranslationDirectionConfig,
     TranslationDirectionEstimator,
@@ -48,6 +54,10 @@ __all__ = [
     "PathPoint",
     "RelativePathStatus",
     "RelativePathTracker",
+    "RotationSectionClassification",
+    "RotationSectionClassifier",
+    "RotationSectionConfig",
+    "RotationSectionKind",
     "TranslationDirectionConfig",
     "TranslationDirectionEstimator",
     "TranslationDirectionMeasurement",

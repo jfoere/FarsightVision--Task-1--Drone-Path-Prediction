@@ -25,31 +25,32 @@ class RelativeHeadingTracker:
         return self._last_change_degrees
 
     @property
-    def known(self) -> bool:
-        return self._known
+    def reliable(self) -> bool:
+        return not self._assumed
+
+    @property
+    def assumed(self) -> bool:
+        return self._assumed
 
     def reset(self) -> None:
         self._heading_degrees = 0.0
         self._last_change_degrees: float | None = None
-        self._known = True
+        self._assumed = False
 
     def apply(self, section: RotationSectionClassification) -> bool:
         """Apply one completed section without changing path position."""
         if not section.significant:
             return False
         if section.kind == RotationSectionKind.UNCERTAIN:
-            self._known = False
             self._last_change_degrees = None
-            return False
-        if not self._known:
-            return False
+            self._assumed = True
+            return True
         if section.kind == RotationSectionKind.GIMBAL_PITCH:
             self._last_change_degrees = 0.0
             return True
 
         change = section.heading_change_degrees
         if change is None or not math.isfinite(change):
-            self._known = False
             self._last_change_degrees = None
             return False
         self._heading_degrees = _normalize_degrees(self._heading_degrees + change)

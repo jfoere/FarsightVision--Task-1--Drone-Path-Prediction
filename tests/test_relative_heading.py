@@ -33,7 +33,8 @@ class RelativeHeadingTrackerTests(unittest.TestCase):
         self.heading = RelativeHeadingTracker()
 
     def test_starts_at_relative_zero(self) -> None:
-        self.assertTrue(self.heading.known)
+        self.assertTrue(self.heading.reliable)
+        self.assertFalse(self.heading.assumed)
         self.assertEqual(self.heading.heading_degrees, 0.0)
 
     def test_accumulates_signed_drone_yaw(self) -> None:
@@ -56,12 +57,27 @@ class RelativeHeadingTrackerTests(unittest.TestCase):
         self.assertEqual(self.heading.heading_degrees, 0.0)
         self.assertEqual(self.heading.last_change_degrees, 0.0)
 
-    def test_significant_uncertainty_makes_heading_unknown(self) -> None:
+    def test_significant_uncertainty_keeps_an_assumed_heading(self) -> None:
+        applied = self.heading.apply(
+            _section(RotationSectionKind.UNCERTAIN, heading_change=None)
+        )
+
+        self.assertTrue(applied)
+        self.assertFalse(self.heading.reliable)
+        self.assertTrue(self.heading.assumed)
+        self.assertEqual(self.heading.heading_degrees, 0.0)
+
+    def test_yaw_continues_from_an_assumed_heading(self) -> None:
         self.heading.apply(
             _section(RotationSectionKind.UNCERTAIN, heading_change=None)
         )
 
-        self.assertFalse(self.heading.known)
+        self.heading.apply(
+            _section(RotationSectionKind.DRONE_YAW, heading_change=25.0)
+        )
+
+        self.assertEqual(self.heading.heading_degrees, 25.0)
+        self.assertTrue(self.heading.assumed)
 
     def test_insignificant_warmup_is_ignored(self) -> None:
         applied = self.heading.apply(
@@ -73,7 +89,8 @@ class RelativeHeadingTrackerTests(unittest.TestCase):
         )
 
         self.assertFalse(applied)
-        self.assertTrue(self.heading.known)
+        self.assertTrue(self.heading.reliable)
+        self.assertFalse(self.heading.assumed)
 
     def test_normalizes_accumulated_heading(self) -> None:
         self.heading.apply(

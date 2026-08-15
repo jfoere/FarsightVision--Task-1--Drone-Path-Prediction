@@ -637,6 +637,7 @@ def _draw_relative_path(
     path: RelativePathTracker,
     heading: RelativeHeadingTracker,
     rotation_section: RotationSectionClassification | None = None,
+    rotation_section_active: bool = False,
 ) -> np.ndarray:
     """Draw the safely accumulated relative path in the second panel."""
     display = frame.copy()
@@ -650,15 +651,15 @@ def _draw_relative_path(
     cv2.addWeighted(overlay, 0.70, display, 0.30, 0, display)
     cv2.rectangle(display, (left, top), (right, bottom), (150, 150, 150), 1)
 
-    if path.status == RelativePathStatus.ACTIVE:
+    if rotation_section_active:
+        if rotation_section is None or rotation_section.sample_count == 0:
+            status_label = "PAUSED / COLLECTING"
+        else:
+            status_label = f"PAUSED / {rotation_section.kind.value}"
+        status_color = MOTION_STATE_COLORS[MotionState.ROTATION]
+    elif path.status == RelativePathStatus.ACTIVE:
         status_label = "ACTIVE"
         status_color = RELATIVE_PATH_COLOR
-    elif path.status == RelativePathStatus.ORIENTATION_UNKNOWN:
-        if rotation_section is None or rotation_section.sample_count == 0:
-            status_label = "ORIENTATION ?"
-        else:
-            status_label = f"FROZEN / {rotation_section.kind.value}"
-        status_color = MOTION_STATE_COLORS[MotionState.ROTATION]
     else:
         status_label = "WAITING"
         status_color = (190, 190, 190)
@@ -684,14 +685,14 @@ def _draw_relative_path(
         1,
         cv2.LINE_AA,
     )
-    if heading.known:
-        heading_label = f"HEADING {heading.heading_degrees:+.1f} deg"
+    heading_label = f"HEADING {heading.heading_degrees:+.1f} deg"
+    if heading.assumed:
+        heading_label += " / ASSUMED"
+        heading_color = MOTION_STATE_COLORS[MotionState.ROTATION]
+    else:
         if heading.last_change_degrees is not None:
             heading_label += f" / delta {heading.last_change_degrees:+.1f}"
         heading_color = CAMERA_DIRECTION_COLOR
-    else:
-        heading_label = "HEADING ?"
-        heading_color = MOTION_STATE_COLORS[MotionState.UNCERTAIN]
     cv2.putText(
         display,
         heading_label,
@@ -760,6 +761,30 @@ def _draw_relative_path(
             cv2.LINE_AA,
         )
 
+    for marker_x, marker_y in path.uncertainty_markers:
+        marker = (
+            center_x + round(marker_x * scale),
+            center_y - round(marker_y * scale),
+        )
+        cv2.circle(
+            display,
+            marker,
+            7,
+            MOTION_STATE_COLORS[MotionState.ROTATION],
+            2,
+            cv2.LINE_AA,
+        )
+        cv2.putText(
+            display,
+            "?",
+            (marker[0] + 8, marker[1] - 4),
+            font,
+            0.35,
+            MOTION_STATE_COLORS[MotionState.ROTATION],
+            1,
+            cv2.LINE_AA,
+        )
+
     start = tuple(int(value) for value in map_points[0, 0])
     current = tuple(int(value) for value in map_points[-1, 0])
     cv2.circle(display, start, 4, (235, 235, 235), -1, cv2.LINE_AA)
@@ -779,31 +804,35 @@ def _draw_relative_path(
             cv2.LINE_AA,
             tipLength=0.35,
         )
-    if heading.known:
-        heading_angle = math.radians(heading.heading_degrees)
-        heading_end = (
-            current[0] + round(math.sin(heading_angle) * 25),
-            current[1] - round(math.cos(heading_angle) * 25),
-        )
-        cv2.arrowedLine(
-            display,
-            current,
-            heading_end,
-            CAMERA_DIRECTION_COLOR,
-            2,
-            cv2.LINE_AA,
-            tipLength=0.30,
-        )
-        cv2.putText(
-            display,
-            "HEAD",
-            (heading_end[0] + 3, heading_end[1] + 3),
-            font,
-            0.25,
-            CAMERA_DIRECTION_COLOR,
-            1,
-            cv2.LINE_AA,
-        )
+    heading_angle = math.radians(heading.heading_degrees)
+    heading_end = (
+        current[0] + round(math.sin(heading_angle) * 25),
+        current[1] - round(math.cos(heading_angle) * 25),
+    )
+    heading_arrow_color = (
+        MOTION_STATE_COLORS[MotionState.ROTATION]
+        if heading.assumed
+        else CAMERA_DIRECTION_COLOR
+    )
+    cv2.arrowedLine(
+        display,
+        current,
+        heading_end,
+        heading_arrow_color,
+        2,
+        cv2.LINE_AA,
+        tipLength=0.30,
+    )
+    cv2.putText(
+        display,
+        "HEAD",
+        (heading_end[0] + 3, heading_end[1] + 3),
+        font,
+        0.25,
+        heading_arrow_color,
+        1,
+        cv2.LINE_AA,
+    )
     return display
 
 
@@ -1324,6 +1353,12 @@ def run_debug_viewer(
                             rotation_measurement
                         )
                         relative_heading.apply(last_rotation_classification)
+                        if (
+                            last_rotation_classification.significant
+                            and last_rotation_classification.kind
+                            == RotationSectionKind.UNCERTAIN
+                        ):
+                            relative_path.mark_uncertainty()
                         rotation_section_active = False
                     rotation_handler.reset()
                     rotation_measurement = CameraRotationMeasurement.unavailable()
@@ -1357,12 +1392,15 @@ def run_debug_viewer(
                             distance=(
                                 project_config.movement_direction.window_seconds
                             ),
+                            map_heading_degrees=(
+                                relative_heading.heading_degrees
+                            ),
                         )
                         direction_anchor_frame = current_flow_frame.copy()
                         direction_anchor_index = frame_index
                 else:
                     rotation_section_active = True
-                    relative_path.mark_orientation_unknown()
+                    relative_path.end_translation_section()
                     rotation_measurement = rotation_handler.update(
                         flow_result,
                         (
@@ -1440,6 +1478,7 @@ def run_debug_viewer(
                 relative_path,
                 relative_heading,
                 visible_rotation_classification,
+                rotation_section_active,
             )
             display, decrease_button, increase_button = _draw_speed_controls(
                 display,

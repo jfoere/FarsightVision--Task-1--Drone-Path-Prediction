@@ -17,11 +17,10 @@ PathPoint = tuple[float, float]
 class RelativePathStatus(str, Enum):
     WAITING = "WAITING"
     ACTIVE = "ACTIVE"
-    ORIENTATION_UNKNOWN = "ORIENTATION UNKNOWN"
 
 
 class RelativePathTracker:
-    """Build a connected path while its camera-to-map orientation is known."""
+    """Build connected straight translation sections in a relative map."""
 
     def __init__(self) -> None:
         self.reset()
@@ -32,11 +31,13 @@ class RelativePathTracker:
 
     @property
     def status(self) -> RelativePathStatus:
-        if self._orientation_unknown:
-            return RelativePathStatus.ORIENTATION_UNKNOWN
         if self._started:
             return RelativePathStatus.ACTIVE
         return RelativePathStatus.WAITING
+
+    @property
+    def uncertainty_markers(self) -> Sequence[PathPoint]:
+        return self._uncertainty_markers
 
     @property
     def current_position(self) -> PathPoint:
@@ -56,8 +57,8 @@ class RelativePathTracker:
 
     def reset(self) -> None:
         self._points: list[PathPoint] = [(0.0, 0.0)]
+        self._uncertainty_markers: list[PathPoint] = []
         self._started = False
-        self._orientation_unknown = False
         self._section_active = False
         self._section_start: PathPoint = (0.0, 0.0)
         self._section_distance = 0.0
@@ -67,27 +68,35 @@ class RelativePathTracker:
         self._sample_count = 0
         self._section_count = 0
 
-    def mark_orientation_unknown(self) -> None:
-        """Prevent further integration after an unmodelled view change."""
-        if self._started:
-            self._orientation_unknown = True
-            self._section_active = False
+    def end_translation_section(self) -> None:
+        """Finish the current straight section without moving the endpoint."""
+        self._section_active = False
+
+    def mark_uncertainty(self) -> None:
+        """Record where a zero-heading-change assumption was made."""
+        marker = self.current_position
+        if not self._uncertainty_markers or self._uncertainty_markers[-1] != marker:
+            self._uncertainty_markers.append(marker)
 
     def add_direction_sample(
         self,
         direction: TranslationDirectionMeasurement,
         *,
         distance: float,
+        map_heading_degrees: float = 0.0,
     ) -> bool:
         """Update one straight section from another direction observation."""
         if not math.isfinite(distance) or distance <= 0:
             raise ValueError("distance must be greater than zero")
-        if self._orientation_unknown or not direction.valid:
+        if not direction.valid:
             return False
 
-        angle_degrees = direction.horizontal_angle_degrees
-        if not math.isfinite(angle_degrees):
+        camera_angle_degrees = direction.horizontal_angle_degrees
+        if not math.isfinite(camera_angle_degrees):
             return False
+        if not math.isfinite(map_heading_degrees):
+            raise ValueError("map_heading_degrees must be finite")
+        angle_degrees = camera_angle_degrees + map_heading_degrees
         angle = math.radians(angle_degrees)
         confidence = direction.inlier_ratio
         if not math.isfinite(confidence) or confidence < 0:

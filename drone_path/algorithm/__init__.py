@@ -1,5 +1,11 @@
 """Motion-estimation algorithms with no UI dependencies."""
 
+from drone_path.algorithm.camera_rotation import (
+    CameraRotationConfig,
+    CameraRotationHandler,
+    CameraRotationMeasurement,
+)
+
 from drone_path.algorithm.global_motion import (
     GlobalMotionConfig,
     GlobalMotionEstimator,
@@ -15,8 +21,21 @@ from drone_path.algorithm.optical_flow import (
     OpticalFlowEstimator,
     OpticalFlowResult,
 )
+from drone_path.algorithm.relative_path import (
+    PathPoint,
+    RelativePathStatus,
+    RelativePathTracker,
+)
+from drone_path.algorithm.translation_direction import (
+    TranslationDirectionConfig,
+    TranslationDirectionEstimator,
+    TranslationDirectionMeasurement,
+)
 
 __all__ = [
+    "CameraRotationConfig",
+    "CameraRotationHandler",
+    "CameraRotationMeasurement",
     "GlobalMotionConfig",
     "GlobalMotionEstimator",
     "GlobalMotionMeasurement",
@@ -26,4 +45,10 @@ __all__ = [
     "OpticalFlowConfig",
     "OpticalFlowEstimator",
     "OpticalFlowResult",
+    "PathPoint",
+    "RelativePathStatus",
+    "RelativePathTracker",
+    "TranslationDirectionConfig",
+    "TranslationDirectionEstimator",
+    "TranslationDirectionMeasurement",
 ]

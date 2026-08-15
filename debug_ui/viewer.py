@@ -11,13 +11,22 @@ import cv2
 import numpy as np
 
 from drone_path.algorithm import (
+    CameraRotationConfig as CameraRotationAlgorithmConfig,
+    CameraRotationHandler,
+    CameraRotationMeasurement,
     GlobalMotionEstimator,
     GlobalMotionMeasurement,
     MotionClassifier,
     MotionState,
     OpticalFlowEstimator,
     OpticalFlowResult,
+    RelativePathStatus,
+    RelativePathTracker,
+    TranslationDirectionConfig,
+    TranslationDirectionEstimator,
+    TranslationDirectionMeasurement,
 )
+from drone_path.config import load_config
 from drone_path.video import open_video
 
 
@@ -44,6 +53,9 @@ MOTION_STATE_COLORS = {
     MotionState.ROTATION: (0, 150, 255),
 }
 UNKNOWN_TIMELINE_COLOR = (80, 80, 80)
+CAMERA_DIRECTION_COLOR = (0, 220, 255)
+MOVEMENT_DIRECTION_COLOR = (255, 210, 50)
+RELATIVE_PATH_COLOR = (70, 210, 70)
 
 
 @dataclass(slots=True)
@@ -285,6 +297,434 @@ def _draw_motion_metrics(
         1,
         cv2.LINE_AA,
     )
+    return display
+
+
+def _debug_panel_geometry(
+    frame,
+    panel_index: int,
+) -> tuple[int, int, int, int] | None:
+    """Return one of two larger, vertically stacked debug panels."""
+    height, width = frame.shape[:2]
+    first_top = max(74, round(height * 0.12))
+    gap = 10
+    bottom_reserved = 70
+    desired_size = max(120, min(220, round(min(width, height) * 0.28)))
+    maximum_size = min(
+        width - 20,
+        (height - first_top - bottom_reserved - gap) // 2,
+    )
+    size = min(desired_size, maximum_size)
+    if size < 80:
+        return None
+
+    left = width - size - 10
+    top = first_top + panel_index * (size + gap)
+    return left, top, left + size, top + size
+
+
+def _draw_translation_direction(
+    frame,
+    direction: TranslationDirectionMeasurement,
+    *,
+    window_seconds: float,
+) -> np.ndarray:
+    """Draw camera-forward and estimated-movement arrows in a top view."""
+    display = frame.copy()
+    geometry = _debug_panel_geometry(display, 0)
+    if geometry is None:
+        return display
+    left, top, right, bottom = geometry
+    overlay = display.copy()
+    cv2.rectangle(overlay, (left, top), (right, bottom), (0, 0, 0), -1)
+    cv2.addWeighted(overlay, 0.70, display, 0.30, 0, display)
+    cv2.rectangle(display, (left, top), (right, bottom), (150, 150, 150), 1)
+
+    font = cv2.FONT_HERSHEY_SIMPLEX
+    state_label = "READY" if direction.valid else "COLLECTING"
+    state_color = MOVEMENT_DIRECTION_COLOR if direction.valid else (190, 190, 190)
+    cv2.putText(
+        display,
+        f"DIRECTION  {state_label}",
+        (left + 8, top + 17),
+        font,
+        0.36,
+        state_color,
+        1,
+        cv2.LINE_AA,
+    )
+    cv2.putText(
+        display,
+        (
+            f"move {direction.horizontal_angle_degrees:+.1f} deg"
+            if direction.valid
+            else f"window {window_seconds:.2f} s"
+        ),
+        (left + 8, top + 32),
+        font,
+        0.32,
+        (210, 210, 210),
+        1,
+        cv2.LINE_AA,
+    )
+    cv2.putText(
+        display,
+        (
+            f"pose inliers {direction.inlier_ratio:.0%}"
+            if direction.tracked_count > 0
+            else "TOP VIEW / RELATIVE"
+        ),
+        (left + 8, bottom - 7),
+        font,
+        0.30,
+        (170, 170, 170),
+        1,
+        cv2.LINE_AA,
+    )
+
+    plot_left = left + 12
+    plot_right = right - 12
+    plot_top = top + 40
+    plot_bottom = bottom - 20
+    center_x = (plot_left + plot_right) // 2
+    center_y = (plot_top + plot_bottom) // 2
+    cv2.line(
+        display,
+        (plot_left, center_y),
+        (plot_right, center_y),
+        (75, 75, 75),
+        1,
+        cv2.LINE_AA,
+    )
+    cv2.line(
+        display,
+        (center_x, plot_top),
+        (center_x, plot_bottom),
+        (75, 75, 75),
+        1,
+        cv2.LINE_AA,
+    )
+
+    arrow_length = max(
+        20,
+        round(min(plot_right - plot_left, plot_bottom - plot_top) * 0.42),
+    )
+    origin = (center_x, center_y)
+    if direction.valid:
+        angle = math.radians(direction.horizontal_angle_degrees)
+        movement_end = (
+            center_x + round(math.sin(angle) * arrow_length),
+            center_y - round(math.cos(angle) * arrow_length),
+        )
+        cv2.arrowedLine(
+            display,
+            origin,
+            movement_end,
+            MOVEMENT_DIRECTION_COLOR,
+            3,
+            cv2.LINE_AA,
+            tipLength=0.22,
+        )
+        cv2.putText(
+            display,
+            "MOVE",
+            (movement_end[0] + 4, movement_end[1] + 4),
+            font,
+            0.28,
+            MOVEMENT_DIRECTION_COLOR,
+            1,
+            cv2.LINE_AA,
+        )
+    camera_length = round(arrow_length * 0.65)
+    camera_end = (center_x, center_y - camera_length)
+    cv2.arrowedLine(
+        display,
+        origin,
+        camera_end,
+        CAMERA_DIRECTION_COLOR,
+        2,
+        cv2.LINE_AA,
+        tipLength=0.28,
+    )
+    cv2.putText(
+        display,
+        "CAM",
+        (camera_end[0] + 4, camera_end[1] + 4),
+        font,
+        0.28,
+        CAMERA_DIRECTION_COLOR,
+        1,
+        cv2.LINE_AA,
+    )
+    cv2.circle(display, origin, 4, (235, 235, 235), -1, cv2.LINE_AA)
+    return display
+
+
+def _draw_camera_rotation(
+    frame,
+    rotation: CameraRotationMeasurement,
+    state: MotionState,
+) -> np.ndarray:
+    """Draw accumulated camera yaw, pitch, and roll in the first panel."""
+    display = frame.copy()
+    geometry = _debug_panel_geometry(display, 0)
+    if geometry is None:
+        return display
+    left, top, right, bottom = geometry
+    overlay = display.copy()
+    cv2.rectangle(overlay, (left, top), (right, bottom), (0, 0, 0), -1)
+    cv2.addWeighted(overlay, 0.70, display, 0.30, 0, display)
+    cv2.rectangle(display, (left, top), (right, bottom), (150, 150, 150), 1)
+
+    font = cv2.FONT_HERSHEY_SIMPLEX
+    state_color = MOTION_STATE_COLORS[state]
+    cv2.putText(
+        display,
+        "CAMERA ROTATION",
+        (left + 8, top + 17),
+        font,
+        0.36,
+        state_color,
+        1,
+        cv2.LINE_AA,
+    )
+    if rotation.valid:
+        cv2.putText(
+            display,
+            f"yaw {rotation.yaw_degrees:+.1f}  pitch {rotation.pitch_degrees:+.1f}",
+            (left + 8, top + 32),
+            font,
+            0.29,
+            (215, 215, 215),
+            1,
+            cv2.LINE_AA,
+        )
+        cv2.putText(
+            display,
+            f"roll {rotation.roll_degrees:+.1f}  samples {rotation.sample_count}",
+            (left + 8, top + 47),
+            font,
+            0.29,
+            (215, 215, 215),
+            1,
+            cv2.LINE_AA,
+        )
+        footer = (
+            f"inliers {rotation.inlier_ratio:.0%} / "
+            f"error {rotation.median_reprojection_error_pixels:.1f}px"
+        )
+    else:
+        cv2.putText(
+            display,
+            f"{state.value} / COLLECTING",
+            (left + 8, top + 34),
+            font,
+            0.31,
+            (190, 190, 190),
+            1,
+            cv2.LINE_AA,
+        )
+        footer = "PURE ROTATION MODEL"
+    cv2.putText(
+        display,
+        footer,
+        (left + 8, bottom - 7),
+        font,
+        0.28,
+        (170, 170, 170),
+        1,
+        cv2.LINE_AA,
+    )
+
+    plot_left = left + 12
+    plot_right = right - 12
+    plot_top = top + 54
+    plot_bottom = bottom - 20
+    center_x = (plot_left + plot_right) // 2
+    center_y = (plot_top + plot_bottom) // 2
+    cv2.line(
+        display,
+        (plot_left, center_y),
+        (plot_right, center_y),
+        (75, 75, 75),
+        1,
+        cv2.LINE_AA,
+    )
+    cv2.line(
+        display,
+        (center_x, plot_top),
+        (center_x, plot_bottom),
+        (75, 75, 75),
+        1,
+        cv2.LINE_AA,
+    )
+    arrow_length = max(
+        18,
+        round(min(plot_right - plot_left, plot_bottom - plot_top) * 0.42),
+    )
+    origin = (center_x, center_y)
+    initial_end = (center_x, center_y - round(arrow_length * 0.65))
+    cv2.arrowedLine(
+        display,
+        origin,
+        initial_end,
+        (130, 130, 130),
+        2,
+        cv2.LINE_AA,
+        tipLength=0.28,
+    )
+    if rotation.valid:
+        yaw = math.radians(rotation.yaw_degrees)
+        pitch_scale = max(0.15, abs(math.cos(math.radians(rotation.pitch_degrees))))
+        current_length = arrow_length * pitch_scale
+        current_end = (
+            center_x + round(math.sin(yaw) * current_length),
+            center_y - round(math.cos(yaw) * current_length),
+        )
+        cv2.arrowedLine(
+            display,
+            origin,
+            current_end,
+            state_color,
+            3,
+            cv2.LINE_AA,
+            tipLength=0.25,
+        )
+        cv2.putText(
+            display,
+            "CAM",
+            (current_end[0] + 4, current_end[1] + 4),
+            font,
+            0.28,
+            state_color,
+            1,
+            cv2.LINE_AA,
+        )
+    cv2.circle(display, origin, 4, (235, 235, 235), -1, cv2.LINE_AA)
+    return display
+
+
+def _draw_relative_path(frame, path: RelativePathTracker) -> np.ndarray:
+    """Draw the safely accumulated relative path in the second panel."""
+    display = frame.copy()
+    geometry = _debug_panel_geometry(display, 1)
+    if geometry is None:
+        return display
+    left, top, right, bottom = geometry
+
+    overlay = display.copy()
+    cv2.rectangle(overlay, (left, top), (right, bottom), (0, 0, 0), -1)
+    cv2.addWeighted(overlay, 0.70, display, 0.30, 0, display)
+    cv2.rectangle(display, (left, top), (right, bottom), (150, 150, 150), 1)
+
+    if path.status == RelativePathStatus.ACTIVE:
+        status_label = "ACTIVE"
+        status_color = RELATIVE_PATH_COLOR
+    elif path.status == RelativePathStatus.ORIENTATION_UNKNOWN:
+        status_label = "ORIENTATION ?"
+        status_color = MOTION_STATE_COLORS[MotionState.ROTATION]
+    else:
+        status_label = "WAITING"
+        status_color = (190, 190, 190)
+
+    font = cv2.FONT_HERSHEY_SIMPLEX
+    cv2.putText(
+        display,
+        "RELATIVE PATH",
+        (left + 8, top + 17),
+        font,
+        0.38,
+        status_color,
+        1,
+        cv2.LINE_AA,
+    )
+    cv2.putText(
+        display,
+        status_label,
+        (left + 8, top + 33),
+        font,
+        0.32,
+        status_color,
+        1,
+        cv2.LINE_AA,
+    )
+    cv2.putText(
+        display,
+        f"section {path.section_count} / {path.sample_count} samples",
+        (left + 8, bottom - 7),
+        font,
+        0.30,
+        (170, 170, 170),
+        1,
+        cv2.LINE_AA,
+    )
+
+    plot_left = left + 12
+    plot_right = right - 12
+    plot_top = top + 40
+    plot_bottom = bottom - 20
+    center_x = (plot_left + plot_right) // 2
+    center_y = (plot_top + plot_bottom) // 2
+    cv2.line(
+        display,
+        (plot_left, center_y),
+        (plot_right, center_y),
+        (75, 75, 75),
+        1,
+        cv2.LINE_AA,
+    )
+    cv2.line(
+        display,
+        (center_x, plot_top),
+        (center_x, plot_bottom),
+        (75, 75, 75),
+        1,
+        cv2.LINE_AA,
+    )
+
+    points = np.asarray(path.points, dtype=np.float64)
+    maximum_distance = max(1.0, float(np.max(np.abs(points))))
+    half_plot_size = max(
+        1,
+        min(plot_right - plot_left, plot_bottom - plot_top) / 2,
+    )
+    scale = (half_plot_size * 0.86) / maximum_distance
+    map_points = np.column_stack(
+        (
+            center_x + points[:, 0] * scale,
+            center_y - points[:, 1] * scale,
+        )
+    )
+    map_points = np.rint(map_points).astype(np.int32).reshape(-1, 1, 2)
+    if len(map_points) > 1:
+        cv2.polylines(
+            display,
+            [map_points],
+            False,
+            RELATIVE_PATH_COLOR,
+            2,
+            cv2.LINE_AA,
+        )
+
+    start = tuple(int(value) for value in map_points[0, 0])
+    current = tuple(int(value) for value in map_points[-1, 0])
+    cv2.circle(display, start, 4, (235, 235, 235), -1, cv2.LINE_AA)
+    cv2.circle(display, current, 5, MOVEMENT_DIRECTION_COLOR, -1, cv2.LINE_AA)
+    if path.average_direction_degrees is not None:
+        angle = math.radians(path.average_direction_degrees)
+        direction_end = (
+            current[0] + round(math.sin(angle) * 13),
+            current[1] - round(math.cos(angle) * 13),
+        )
+        cv2.arrowedLine(
+            display,
+            current,
+            direction_end,
+            MOVEMENT_DIRECTION_COLOR,
+            2,
+            cv2.LINE_AA,
+            tipLength=0.35,
+        )
     return display
 
 
@@ -597,6 +1037,28 @@ def run_debug_viewer(
     estimator = OpticalFlowEstimator()
     motion_estimator = GlobalMotionEstimator()
     motion_classifier = MotionClassifier()
+    project_config = load_config()
+    direction_estimator = TranslationDirectionEstimator(
+        TranslationDirectionConfig(
+            smoothing_alpha=project_config.movement_direction.smoothing_alpha
+        )
+    )
+    rotation_handler = CameraRotationHandler(
+        CameraRotationAlgorithmConfig(
+            minimum_inlier_ratio=(
+                project_config.camera_rotation.minimum_inlier_ratio
+            ),
+            maximum_rotation_reprojection_error_pixels=(
+                project_config.camera_rotation.maximum_reprojection_error_pixels
+            ),
+        )
+    )
+    relative_path = RelativePathTracker()
+    direction_window_frames = (
+        max(1, round(project_config.movement_direction.window_seconds * fps))
+        if fps > 0
+        else 0
+    )
 
     paused = False
     advance_one_frame = True
@@ -608,6 +1070,10 @@ def run_debug_viewer(
     flow_result = OpticalFlowResult.empty()
     motion_measurement = GlobalMotionMeasurement.unavailable()
     motion_state = MotionState.UNCERTAIN
+    direction_measurement = TranslationDirectionMeasurement.unavailable()
+    rotation_measurement = CameraRotationMeasurement.unavailable()
+    direction_anchor_frame = None
+    direction_anchor_index: int | None = None
     classified_states = (
         np.full((total_frames,), -1, dtype=np.int8)
         if total_frames > 0
@@ -695,6 +1161,13 @@ def run_debug_viewer(
                 motion_measurement = GlobalMotionMeasurement.unavailable()
                 motion_classifier.reset()
                 motion_state = MotionState.UNCERTAIN
+                direction_estimator.reset()
+                direction_measurement = TranslationDirectionMeasurement.unavailable()
+                rotation_handler.reset()
+                rotation_measurement = CameraRotationMeasurement.unavailable()
+                direction_anchor_frame = None
+                direction_anchor_index = None
+                relative_path.reset()
                 paused = True
                 advance_one_frame = True
 
@@ -742,6 +1215,57 @@ def run_debug_viewer(
                     )
                 else:
                     motion_state = MotionState.UNCERTAIN
+                if motion_state == MotionState.TRANSLATION and fps > 0:
+                    rotation_handler.reset()
+                    rotation_measurement = CameraRotationMeasurement.unavailable()
+                    if direction_anchor_frame is None:
+                        direction_anchor_frame = current_flow_frame.copy()
+                        direction_anchor_index = frame_index
+                    elif (
+                        direction_anchor_index is not None
+                        and frame_index - direction_anchor_index
+                        >= direction_window_frames
+                    ):
+                        direction_flow = estimator.estimate(
+                            direction_anchor_frame,
+                            current_flow_frame,
+                        )
+                        direction_measurement = direction_estimator.estimate(
+                            direction_flow,
+                            (
+                                current_flow_frame.shape[1],
+                                current_flow_frame.shape[0],
+                            ),
+                            horizontal_fov_degrees=(
+                                project_config.camera.horizontal_fov_degrees
+                            ),
+                        )
+                        relative_path.add_direction_sample(
+                            direction_measurement,
+                            distance=(
+                                project_config.movement_direction.window_seconds
+                            ),
+                        )
+                        direction_anchor_frame = current_flow_frame.copy()
+                        direction_anchor_index = frame_index
+                else:
+                    relative_path.mark_orientation_unknown()
+                    rotation_measurement = rotation_handler.update(
+                        flow_result,
+                        (
+                            current_flow_frame.shape[1],
+                            current_flow_frame.shape[0],
+                        ),
+                        horizontal_fov_degrees=(
+                            project_config.camera.horizontal_fov_degrees
+                        ),
+                    )
+                    direction_estimator.reset()
+                    direction_measurement = (
+                        TranslationDirectionMeasurement.unavailable()
+                    )
+                    direction_anchor_frame = None
+                    direction_anchor_index = None
                 if (
                     classified_states is not None
                     and 0 <= frame_index < classified_states.size
@@ -775,6 +1299,21 @@ def run_debug_viewer(
                 motion_measurement,
                 motion_state,
             )
+            if motion_state == MotionState.TRANSLATION:
+                display = _draw_translation_direction(
+                    display,
+                    direction_measurement,
+                    window_seconds=(
+                        project_config.movement_direction.window_seconds
+                    ),
+                )
+            else:
+                display = _draw_camera_rotation(
+                    display,
+                    rotation_measurement,
+                    motion_state,
+                )
+            display = _draw_relative_path(display, relative_path)
             display, decrease_button, increase_button = _draw_speed_controls(
                 display,
                 float(speed_state["value"]),

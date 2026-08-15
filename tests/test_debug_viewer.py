@@ -6,16 +6,25 @@ import unittest
 
 import numpy as np
 
-from drone_path.algorithm import GlobalMotionMeasurement, MotionState
+from drone_path.algorithm import (
+    CameraRotationMeasurement,
+    GlobalMotionMeasurement,
+    MotionState,
+    RelativePathTracker,
+    TranslationDirectionMeasurement,
+)
 from debug_ui.viewer import (
     MOTION_STATE_CODES,
     MOTION_STATE_COLORS,
     StateTimelineViewport,
     _change_playback_speed,
+    _draw_camera_rotation,
     _draw_motion_metrics,
+    _draw_relative_path,
     _draw_speed_controls,
     _draw_state_timeline,
     _draw_timeline,
+    _draw_translation_direction,
     _frame_from_timeline,
     _point_inside,
 )
@@ -132,6 +141,67 @@ class PlaybackSpeedTests(unittest.TestCase):
             measurement,
             MotionState.TRANSLATION,
         )
+
+        self.assertTrue(np.any(display != frame))
+
+    def test_draws_translation_direction_arrows(self) -> None:
+        frame = np.zeros((720, 1280, 3), dtype=np.uint8)
+        direction = TranslationDirectionMeasurement(
+            valid=True,
+            right=2**-0.5,
+            down=0.0,
+            forward=2**-0.5,
+            horizontal_angle_degrees=45.0,
+            inlier_ratio=0.8,
+            inlier_count=80,
+            tracked_count=100,
+        )
+
+        display = _draw_translation_direction(
+            frame,
+            direction,
+            window_seconds=1.0,
+        )
+
+        self.assertTrue(np.any(display != frame))
+
+    def test_draws_camera_rotation_debug_panel(self) -> None:
+        frame = np.zeros((720, 1280, 3), dtype=np.uint8)
+        rotation = CameraRotationMeasurement(
+            valid=True,
+            yaw_degrees=35.0,
+            pitch_degrees=-8.0,
+            roll_degrees=4.0,
+            inlier_ratio=0.9,
+            median_reprojection_error_pixels=2.0,
+            sample_count=20,
+            tracked_count=250,
+        )
+
+        display = _draw_camera_rotation(
+            frame,
+            rotation,
+            MotionState.ROTATION,
+        )
+
+        self.assertTrue(np.any(display != frame))
+
+    def test_draws_relative_path_in_second_panel(self) -> None:
+        frame = np.zeros((720, 1280, 3), dtype=np.uint8)
+        direction = TranslationDirectionMeasurement(
+            valid=True,
+            right=2**-0.5,
+            down=0.0,
+            forward=2**-0.5,
+            horizontal_angle_degrees=45.0,
+            inlier_ratio=0.8,
+            inlier_count=80,
+            tracked_count=100,
+        )
+        path = RelativePathTracker()
+        path.add_direction_sample(direction, distance=1.0)
+
+        display = _draw_relative_path(frame, path)
 
         self.assertTrue(np.any(display != frame))
 

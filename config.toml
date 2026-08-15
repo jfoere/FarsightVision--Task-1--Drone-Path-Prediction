@@ -1,0 +1,16 @@
+[camera]
+# Approximate horizontal field of view. Adjust this when the camera model is
+# unknown or when the estimated movement/rotation direction looks incorrect.
+horizontal_fov_degrees = 84.0
+
+[movement_direction]
+# A longer window gives more stable pose estimation but updates less often.
+window_seconds = 1.0
+# 1.0 uses only the newest estimate; smaller values smooth more strongly.
+smoothing_alpha = 0.35
+
+[camera_rotation]
+# Pure-rotation homography must reproduce tracked points within this error.
+maximum_reprojection_error_pixels = 8.0
+# Fraction of tracked points that must agree with the homography.
+minimum_inlier_ratio = 0.50

@@ -2,6 +2,12 @@
 
 Python/OpenCV solution for **Task 1: Drone Path Prediction**. It tracks motion in a drone video and produces a top-down relative flight path.
 
+## Result video
+
+[![Watch the drone path prediction result on YouTube](https://img.youtube.com/vi/wrT6MQQ4XUI/maxresdefault.jpg)](https://youtu.be/wrT6MQQ4XUI)
+
+[Watch the result video on YouTube](https://youtu.be/wrT6MQQ4XUI)
+
 ## Quick start
 
 ```bash

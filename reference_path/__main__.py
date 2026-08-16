@@ -1,4 +1,4 @@
-"""Run the independent visual-odometry checkpoint."""
+"""Build an estimated metric reference path from GPS and video motion."""
 
 from __future__ import annotations
 
@@ -7,6 +7,12 @@ from collections.abc import Sequence
 from pathlib import Path
 import time
 
+from gps_reference.extractor import GpsMetadataError, extract_gps_samples
+from reference_path.fused_output import (
+    render_fused_reference,
+    save_fused_reference_json,
+)
+from reference_path.fusion import ReferenceFusionError, fuse_reference_trajectory
 from reference_path.output import (
     render_visual_odometry_diagnostic,
     save_visual_odometry_json,
@@ -42,7 +48,7 @@ def _image_size(value: str) -> int:
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        description="Check independent SIFT/homography visual odometry.",
+        description="Build a GPS + video estimated reference path.",
     )
     parser.add_argument("video", type=Path, help="path to the input video")
     parser.add_argument(
@@ -70,14 +76,24 @@ def build_parser() -> argparse.ArgumentParser:
         type=_non_negative_float,
         nargs=2,
         metavar=("START", "END"),
-        help="rotate the path so movement from START to END seconds points up",
+        help=(
+            "rotate only the rendered map so movement from START to END seconds "
+            "points up (default: first stable movement)"
+        ),
+    )
+    parser.add_argument(
+        "--visual-only",
+        action="store_true",
+        help="write the unscaled visual-odometry diagnostic instead of GPS fusion",
     )
     parser.add_argument(
         "--output",
         type=Path,
-        default=Path("vo-diagnostic.png"),
         metavar="PNG",
-        help="diagnostic image (default: vo-diagnostic.png)",
+        help=(
+            "output image (default: reference-path.png, or vo-diagnostic.png "
+            "with --visual-only)"
+        ),
     )
     parser.add_argument(
         "--json-output",
@@ -98,7 +114,10 @@ def build_parser() -> argparse.ArgumentParser:
 def main(argv: Sequence[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
-    json_output = args.json_output or args.output.with_suffix(".json")
+    output = args.output or Path(
+        "vo-diagnostic.png" if args.visual_only else "reference-path.png"
+    )
+    json_output = args.json_output or output.with_suffix(".json")
     started_at = time.perf_counter()
     last_percentage = {"value": -1}
 
@@ -123,14 +142,38 @@ def main(argv: Sequence[str] | None = None) -> int:
         )
         if last_percentage["value"] >= 0:
             print()
-        image_path = render_visual_odometry_diagnostic(
-            result,
-            args.output,
-            image_size=args.image_size,
-            alignment_interval=(tuple(args.align) if args.align is not None else None),
+        alignment_interval = (
+            tuple(args.align) if args.align is not None else None
         )
-        json_path = save_visual_odometry_json(result, json_output)
-    except (VisualOdometryError, OSError, ValueError) as error:
+        if args.visual_only:
+            image_path = render_visual_odometry_diagnostic(
+                result,
+                output,
+                image_size=args.image_size,
+                alignment_interval=alignment_interval,
+            )
+            json_path = save_visual_odometry_json(result, json_output)
+            fused_result = None
+        else:
+            gps_samples = extract_gps_samples(args.video)
+            fused_result = fuse_reference_trajectory(
+                gps_samples,
+                result,
+                alignment_interval=alignment_interval,
+            )
+            image_path = render_fused_reference(
+                fused_result,
+                output,
+                image_size=args.image_size,
+            )
+            json_path = save_fused_reference_json(fused_result, json_output)
+    except (
+        GpsMetadataError,
+        ReferenceFusionError,
+        VisualOdometryError,
+        OSError,
+        ValueError,
+    ) as error:
         if last_percentage["value"] >= 0:
             print()
         parser.error(str(error))
@@ -142,11 +185,24 @@ def main(argv: Sequence[str] | None = None) -> int:
         f"rotation-only: {result.rotation_only_count}; "
         f"unreliable: {result.unreliable_count}."
     )
-    print(
-        f"Rotation-only signed ground yaw: "
-        f"{result.rotation_only_ground_yaw_degrees:+.1f} degrees."
-    )
-    print("This trajectory is unscaled and is not GPS-fused yet.")
+    if fused_result is None:
+        print(
+            f"Rotation-only signed ground yaw: "
+            f"{result.rotation_only_ground_yaw_degrees:+.1f} degrees."
+        )
+        print("This visual-only trajectory is unscaled and is not GPS-fused.")
+    else:
+        print(
+            f"Estimated metric reference: {fused_result.start_to_end_distance_m:.1f} m "
+            f"start-to-end; GPS fit RMS "
+            f"{fused_result.gps_rms_residual_m:.1f} m; last-GPS fit residual "
+            f"{fused_result.endpoint_gps_residual_m:.1f} m."
+        )
+        print(
+            f"Direction calibration: {fused_result.alignment_window_count} windows; "
+            f"VO-to-GPS alignment correction changed "
+            f"{fused_result.visual_alignment_drift_degrees:+.1f} degrees."
+        )
     print(f"Image: {image_path}")
     print(f"Data:  {json_path}")
     return 0

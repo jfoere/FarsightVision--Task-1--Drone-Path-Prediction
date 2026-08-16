@@ -76,6 +76,12 @@ class ReferenceVisualOdometryTests(unittest.TestCase):
         arguments = build_parser().parse_args(["video.mp4"])
 
         self.assertIsNone(arguments.duration)
+        self.assertFalse(arguments.visual_only)
+
+    def test_cli_can_keep_the_visual_only_diagnostic(self) -> None:
+        arguments = build_parser().parse_args(["video.mp4", "--visual-only"])
+
+        self.assertTrue(arguments.visual_only)
 
     def test_selects_ground_plane_translation_solution(self) -> None:
         camera_matrix = _camera_matrix(960, 540, 84.0)

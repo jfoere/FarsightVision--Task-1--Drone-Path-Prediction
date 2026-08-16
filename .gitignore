@@ -6,3 +6,5 @@ __pycache__/
 /gps-path*.png
 /vo-diagnostic*.png
 /vo-diagnostic*.json
+/reference-path*.png
+/reference-path*.json

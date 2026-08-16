@@ -20,3 +20,16 @@ We are excited to see your skills in action! Below are three tasks for you to ch
 - Code to process the video and predict the drone’s path.
 - A map visualization showing the predicted path.
 - Documentation explaining the approach, tools used, and results.
+
+---
+
+## Submission Guidelines
+
+1. **Code:**
+   - Ensure clean, well-structured, and modular code.
+   - Include comments and docstrings to explain key parts of your implementation.
+2. **Documentation:**
+   - A brief overview of your approach, tools used, and any challenges encountered.
+   - Instructions on how to run the code.
+3. **Submission:**
+   - Share your work as a GitHub repository or a zip file with a clear directory structure.

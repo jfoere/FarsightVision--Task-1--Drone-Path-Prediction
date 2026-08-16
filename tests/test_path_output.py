@@ -10,7 +10,12 @@ import unittest
 import cv2
 import numpy as np
 
-from drone_path.path_output import PATH_COLOR, render_path_image, save_prediction_json
+from drone_path.path_output import (
+    PATH_COLOR,
+    _marker_label_origin,
+    render_path_image,
+    save_prediction_json,
+)
 from drone_path.pipeline import PathPredictionResult
 
 
@@ -57,6 +62,22 @@ class PathOutputTests(unittest.TestCase):
     def test_rejects_tiny_image(self) -> None:
         with self.assertRaisesRegex(ValueError, "at least 400"):
             render_path_image(_result(), "unused.png", image_size=399)
+
+    def test_keeps_marker_label_inside_the_plot(self) -> None:
+        origin = _marker_label_origin(
+            (740, 60),
+            (100, 20),
+            marker_radius=8,
+            gap=5,
+            plot_bounds=(50, 50, 750, 700),
+        )
+
+        self.assertLess(origin[0], 740)
+        self.assertGreater(origin[1], 60)
+        self.assertGreaterEqual(origin[0], 55)
+        self.assertLessEqual(origin[0] + 100, 745)
+        self.assertGreaterEqual(origin[1] - 20, 55)
+        self.assertLessEqual(origin[1], 695)
 
 
 if __name__ == "__main__":

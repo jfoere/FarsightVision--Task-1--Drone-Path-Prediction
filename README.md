@@ -32,6 +32,10 @@ The program detects feature points, tracks them with pyramidal Lucas-Kanade opti
 
 The main algorithm does **not** use GPS. Its coordinates are relative because a single monocular camera cannot recover absolute scale reliably.
 
+## Challenges
+
+Full-video processing is slower than desired. I believe a 10x-100x speedup is possible by processing frames more efficiently. But this is only my estimate.
+
 ## Results
 
 **Primary optical-flow prediction (`main.py`, no GPS):**

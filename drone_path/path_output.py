@@ -120,6 +120,7 @@ def render_path_image(
             cv2.LINE_AA,
         )
 
+    font = cv2.FONT_HERSHEY_SIMPLEX
     marker_radius = max(8, round(image_size / 100))
     for marker in markers.reshape(-1, 2) if markers.size else ():
         marker_pixel = to_pixel(marker)
@@ -146,6 +147,42 @@ def render_path_image(
     end = tuple(int(value) for value in pixel_points[-1])
     cv2.circle(canvas, start, marker_radius, FOREGROUND, -1, cv2.LINE_AA)
     cv2.circle(canvas, end, marker_radius, END_COLOR, -1, cv2.LINE_AA)
+    start_label = "START"
+    start_label_scale = image_size / 2000
+    start_label_thickness = max(1, round(image_size / 900))
+    start_label_size, _ = cv2.getTextSize(
+        start_label,
+        font,
+        start_label_scale,
+        start_label_thickness,
+    )
+    start_label_origin = _marker_label_origin(
+        start,
+        start_label_size,
+        marker_radius=marker_radius,
+        gap=max(5, round(image_size / 320)),
+        plot_bounds=(plot_left, plot_top, plot_right, plot_bottom),
+    )
+    cv2.putText(
+        canvas,
+        start_label,
+        start_label_origin,
+        font,
+        start_label_scale,
+        BACKGROUND,
+        start_label_thickness + 3,
+        cv2.LINE_AA,
+    )
+    cv2.putText(
+        canvas,
+        start_label,
+        start_label_origin,
+        font,
+        start_label_scale,
+        FOREGROUND,
+        start_label_thickness,
+        cv2.LINE_AA,
+    )
 
     heading_radians = math.radians(result.final_heading_degrees)
     arrow_length = max(45, round(image_size * 0.055))
@@ -164,7 +201,6 @@ def render_path_image(
         tipLength=0.25,
     )
 
-    font = cv2.FONT_HERSHEY_SIMPLEX
     cv2.putText(
         canvas,
         "RELATIVE DRONE PATH",
@@ -205,3 +241,26 @@ def render_path_image(
     if not cv2.imwrite(str(output), canvas):
         raise OSError(f"OpenCV could not write the path image: {output}")
     return output.resolve()
+
+
+def _marker_label_origin(
+    marker: tuple[int, int],
+    label_size: tuple[int, int],
+    *,
+    marker_radius: int,
+    gap: int,
+    plot_bounds: tuple[int, int, int, int],
+) -> tuple[int, int]:
+    """Place a label beside a marker while keeping it inside the plot."""
+    plot_left, plot_top, plot_right, plot_bottom = plot_bounds
+    label_width, label_height = label_size
+    x = marker[0] + marker_radius + gap
+    if x + label_width > plot_right - gap:
+        x = marker[0] - marker_radius - gap - label_width
+    x = min(max(x, plot_left + gap), plot_right - gap - label_width)
+
+    y = marker[1] - marker_radius - gap
+    if y - label_height < plot_top + gap:
+        y = marker[1] + marker_radius + gap + label_height
+    y = min(max(y, plot_top + gap + label_height), plot_bottom - gap)
+    return x, y

@@ -8,8 +8,8 @@ from pathlib import Path
 
 import numpy as np
 
-from gps_reference.extractor import GpsSample, to_local_metres
-from reference_path.visual_odometry import (
+from reference_gps.extractor import GpsSample, to_local_metres
+from reference_gps_and_video.visual_odometry import (
     TRANSLATION,
     VisualOdometryResult,
 )

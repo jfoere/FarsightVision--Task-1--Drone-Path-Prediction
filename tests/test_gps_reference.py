@@ -9,8 +9,8 @@ import unittest
 import cv2
 import numpy as np
 
-from gps_reference.extractor import GpsSample, parse_dji_subtitle, to_local_metres
-from gps_reference.renderer import (
+from reference_gps.extractor import GpsSample, parse_dji_subtitle, to_local_metres
+from reference_gps.renderer import (
     GPS_PATH_COLOR,
     align_points_to_interval,
     render_gps_path,

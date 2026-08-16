@@ -8,7 +8,7 @@ from pathlib import Path
 import cv2
 import numpy as np
 
-from gps_reference.extractor import GpsSample, to_local_metres
+from reference_gps.extractor import GpsSample, to_local_metres
 
 
 BACKGROUND = (27, 31, 36)

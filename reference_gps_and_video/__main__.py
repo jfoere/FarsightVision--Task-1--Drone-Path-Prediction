@@ -7,17 +7,20 @@ from collections.abc import Sequence
 from pathlib import Path
 import time
 
-from gps_reference.extractor import GpsMetadataError, extract_gps_samples
-from reference_path.fused_output import (
+from reference_gps.extractor import GpsMetadataError, extract_gps_samples
+from reference_gps_and_video.fused_output import (
     render_fused_reference,
     save_fused_reference_json,
 )
-from reference_path.fusion import ReferenceFusionError, fuse_reference_trajectory
-from reference_path.output import (
+from reference_gps_and_video.fusion import (
+    ReferenceFusionError,
+    fuse_reference_trajectory,
+)
+from reference_gps_and_video.output import (
     render_visual_odometry_diagnostic,
     save_visual_odometry_json,
 )
-from reference_path.visual_odometry import (
+from reference_gps_and_video.visual_odometry import (
     VisualOdometryConfig,
     VisualOdometryError,
     VisualOdometryProgress,

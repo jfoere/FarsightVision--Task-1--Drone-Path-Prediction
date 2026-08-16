@@ -1,13 +1,13 @@
 """Independent video constraints and GPS/video reference trajectory fusion."""
 
-from reference_path.fusion import (
+from reference_gps_and_video.fusion import (
     FusedReferenceResult,
     ReferenceFusionConfig,
     ReferenceFusionError,
     fuse_reference_trajectory,
 )
 
-from reference_path.visual_odometry import (
+from reference_gps_and_video.visual_odometry import (
     VisualMotionEstimate,
     VisualOdometryConfig,
     VisualOdometryError,

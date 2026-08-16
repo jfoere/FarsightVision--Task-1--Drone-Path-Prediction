@@ -7,8 +7,8 @@ from collections.abc import Sequence
 from pathlib import Path
 import time
 
-from gps_reference.extractor import GpsMetadataError, extract_gps_samples, to_local_metres
-from gps_reference.renderer import render_gps_path
+from reference_gps.extractor import GpsMetadataError, extract_gps_samples, to_local_metres
+from reference_gps.renderer import render_gps_path
 
 
 def _image_size(value: str) -> int:

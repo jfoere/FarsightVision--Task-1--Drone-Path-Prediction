@@ -10,14 +10,17 @@ import unittest
 import cv2
 import numpy as np
 
-from gps_reference.extractor import GpsSample
-from reference_path.fused_output import (
+from reference_gps.extractor import GpsSample
+from reference_gps_and_video.fused_output import (
     FUSED_PATH_COLOR,
     render_fused_reference,
     save_fused_reference_json,
 )
-from reference_path.fusion import ReferenceFusionError, fuse_reference_trajectory
-from reference_path.visual_odometry import (
+from reference_gps_and_video.fusion import (
+    ReferenceFusionError,
+    fuse_reference_trajectory,
+)
+from reference_gps_and_video.visual_odometry import (
     ROTATION_ONLY,
     TRANSLATION,
     VisualMotionEstimate,

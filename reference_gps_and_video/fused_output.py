@@ -9,8 +9,8 @@ from pathlib import Path
 import cv2
 import numpy as np
 
-from reference_path.fusion import FusedReferenceResult
-from reference_path.visual_odometry import ROTATION_ONLY, UNRELIABLE
+from reference_gps_and_video.fusion import FusedReferenceResult
+from reference_gps_and_video.visual_odometry import ROTATION_ONLY, UNRELIABLE
 
 
 BACKGROUND = (27, 31, 36)

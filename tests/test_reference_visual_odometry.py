@@ -10,15 +10,15 @@ import unittest
 import cv2
 import numpy as np
 
-from reference_path.__main__ import build_parser
-from reference_path.output import (
+from reference_gps_and_video.__main__ import build_parser
+from reference_gps_and_video.output import (
     ROTATION_COLOR,
     VO_PATH_COLOR,
     _align_interval_up,
     render_visual_odometry_diagnostic,
     save_visual_odometry_json,
 )
-from reference_path.visual_odometry import (
+from reference_gps_and_video.visual_odometry import (
     ROTATION_ONLY,
     TRANSLATION,
     VisualMotionEstimate,

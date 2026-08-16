@@ -9,7 +9,7 @@ from pathlib import Path
 import cv2
 import numpy as np
 
-from reference_path.visual_odometry import (
+from reference_gps_and_video.visual_odometry import (
     ROTATION_ONLY,
     TRANSLATION,
     UNRELIABLE,

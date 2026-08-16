@@ -8,3 +8,7 @@ __pycache__/
 /vo-diagnostic*.json
 /reference-path*.png
 /reference-path*.json
+
+# Curated README examples.
+!/path__algorithm-v0.png
+!/path__reference-full.png

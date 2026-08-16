@@ -4,3 +4,5 @@ __pycache__/
 /path*.png
 /path*.json
 /gps-path*.png
+/vo-diagnostic*.png
+/vo-diagnostic*.json

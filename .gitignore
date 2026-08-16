@@ -1,13 +1,3 @@
 .venv/
 __pycache__/
 *.py[cod]
-/path*.png
-/path*.json
-/gps-path*.png
-/vo-diagnostic*.png
-/vo-diagnostic*.json
-/reference-path*.png
-/reference-path*.json
-
-# Curated README examples.
-!/path__*

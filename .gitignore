@@ -3,3 +3,4 @@ __pycache__/
 *.py[cod]
 /path*.png
 /path*.json
+/gps-path*.png

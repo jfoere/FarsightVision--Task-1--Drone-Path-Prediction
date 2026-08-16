@@ -10,4 +10,4 @@ __pycache__/
 /reference-path*.json
 
 # Curated README examples.
-!/path__*.png
+!/path__*

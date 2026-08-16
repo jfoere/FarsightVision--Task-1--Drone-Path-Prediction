@@ -5,13 +5,7 @@ Python/OpenCV solution for **Task 1: Drone Path Prediction**. It tracks motion i
 ## Quick start
 
 ```bash
-python -m venv .venv
-```
-
-Activate the environment (`.\.venv\Scripts\Activate.ps1` on Windows PowerShell or `source .venv/bin/activate` on macOS/Linux), then run:
-
-```bash
-pip install -r requirements.txt
+python -m pip install -r requirements.txt
 python main.py video1.MP4
 ```
 
